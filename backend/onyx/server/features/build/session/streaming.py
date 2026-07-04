@@ -31,6 +31,7 @@ from onyx.configs.constants import MessageType
 from onyx.db.enums import SandboxStatus
 from onyx.db.models import BuildSession
 from onyx.sandbox_proxy import approval_cache
+from onyx.server.features.build import connect_app
 from onyx.server.features.build.db.build_session import create_message
 from onyx.server.features.build.db.build_session import get_build_session
 from onyx.server.features.build.db.build_session import update_session_activity
@@ -39,6 +40,9 @@ from onyx.server.features.build.db.sandbox import get_sandbox_by_user_id
 from onyx.server.features.build.db.sandbox import update_sandbox_heartbeat
 from onyx.server.features.build.packets import ApprovalRequestedPacket
 from onyx.server.features.build.packets import BuildPacket
+from onyx.server.features.build.packets import CompactionPacket
+from onyx.server.features.build.packets import ConnectAppRequestPacket
+from onyx.server.features.build.packets import ContextUsagePacket
 from onyx.server.features.build.packets import ErrorPacket
 from onyx.server.features.build.packets import SubagentStartedPacket
 from onyx.server.features.build.sandbox.base import SandboxManager
@@ -53,6 +57,8 @@ from onyx.server.features.build.sandbox.event_schema import ToolCallStart
 from onyx.server.features.build.sandbox.opencode.serve_client import _merge_field_meta
 from onyx.server.features.build.sandbox.sse import SSEKeepalive
 from onyx.utils.logger import setup_logger
+from onyx.utils.threadpool_concurrency import start_thread_with_context
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
 logger = setup_logger()
 
@@ -91,6 +97,8 @@ class BuildStreamingState:
 
         # For upserting agent_plan_update - track ID so we can update in place
         self.plan_message_id: UUID | None = None
+
+        self.latest_context_usage: dict[str, Any] | None = None
 
         # Track what type of chunk we were last receiving
         self._last_chunk_type: str | None = None
@@ -248,7 +256,17 @@ def event_to_sse(event: Any) -> str:
     """
     if isinstance(event, SSEKeepalive):
         return SSE_KEEPALIVE
-    if isinstance(event, (ApprovalRequestedPacket, ErrorPacket, SubagentStartedPacket)):
+    if isinstance(
+        event,
+        (
+            ApprovalRequestedPacket,
+            ErrorPacket,
+            SubagentStartedPacket,
+            ConnectAppRequestPacket,
+            ContextUsagePacket,
+            CompactionPacket,
+        ),
+    ):
         return _format_packet_event(event)
     return _serialize_sandbox_event(event, _get_event_type(event))
 
@@ -263,17 +281,24 @@ def merge_events_with_announces(
     session_id: UUID,
     tenant_id: str,
 ) -> Generator[Any, None, None]:
-    """Merge sandbox events and approval announces into one stream.
+    """Merge sandbox events and announces into one stream.
 
-    Two producer threads feed a shared queue: the sandbox-event iterator, and a
-    BLPOP poller that emits `ApprovalRequestedPacket` when the proxy
-    signals a new approval. Announce latency is bounded by the 1s BLPOP.
+    Three producer threads feed a shared queue: the sandbox-event iterator, and
+    two BLPOP pollers that inject an `ApprovalRequestedPacket` / a
+    `ConnectAppRequestPacket` when a request is announced from another worker.
+    Announce latency is bounded by the 1s BLPOP.
     """
     output: queue_lib.Queue[Any] = queue_lib.Queue()
     stop = threading.Event()
     done_sentinel = object()
 
     def drive_events() -> None:
+        logger.debug(
+            "[ANNOUNCE-MERGE] drive_events thread=%s session_id=%s observed_tenant=%s",
+            threading.current_thread().name,
+            session_id,
+            CURRENT_TENANT_ID_CONTEXTVAR.get(),
+        )
         try:
             for evt in event_iter:
                 output.put(evt)
@@ -301,16 +326,49 @@ def merge_events_with_announces(
                 ApprovalRequestedPacket(approval_id=approval_id, session_id=session_id)
             )
 
-    events_thread = threading.Thread(
-        target=drive_events, name=f"events-pump-{session_id}", daemon=True
+    def drive_connect_app_announces() -> None:
+        cache = get_cache_backend(tenant_id=tenant_id)
+        while not stop.is_set():
+            try:
+                request = connect_app.pop_announcement(
+                    str(session_id), timeout_s=1, cache=cache
+                )
+            except Exception:
+                logger.exception(
+                    "connect_app.announce_poll_failed session_id=%s", session_id
+                )
+                time.sleep(1)
+                continue
+            if request is None:
+                continue
+            output.put(
+                ConnectAppRequestPacket(
+                    request_id=request.request_id,
+                    app_slug=request.app_slug,
+                    reason=request.reason,
+                )
+            )
+
+    # Spawn via the context-preserving helper so the event iterator's lazy
+    # tenant-scoped DB access (e.g. event-bus creation) sees the caller's
+    # contextvars instead of raising "Tenant ID is not set".
+    logger.debug(
+        "[ANNOUNCE-MERGE] spawning producers thread=%s session_id=%s expected_tenant=%s",
+        threading.current_thread().name,
+        session_id,
+        tenant_id,
     )
-    announce_thread = threading.Thread(
-        target=drive_announces,
-        name=f"announce-pump-{session_id}",
+    start_thread_with_context(
+        drive_events, name=f"events-pump-{session_id}", daemon=True
+    )
+    start_thread_with_context(
+        drive_announces, name=f"announce-pump-{session_id}", daemon=True
+    )
+    start_thread_with_context(
+        drive_connect_app_announces,
+        name=f"connect-app-pump-{session_id}",
         daemon=True,
     )
-    events_thread.start()
-    announce_thread.start()
     try:
         while True:
             item = output.get()
@@ -550,11 +608,29 @@ def persist_sandbox_event(
     if isinstance(sandbox_event, SSEKeepalive):
         return
 
+    # Must return BEFORE should_finalize_chunks — routing it through would fragment
+    # the in-progress streaming text. Captured here, persisted once at finalize.
+    if isinstance(sandbox_event, ContextUsagePacket):
+        state.latest_context_usage = sandbox_event.model_dump(
+            mode="json", by_alias=True
+        )
+        return
+
     # Flush any pending chunks if the event type changed.
     event_type = _get_event_type(sandbox_event)
     event_routing_meta = _routing_meta_from_event(sandbox_event) or routing_meta
     if state.should_finalize_chunks(event_type, event_routing_meta):
         _save_pending_chunks(db_session, session_id, state)
+
+    if isinstance(sandbox_event, CompactionPacket):
+        create_message(
+            session_id=session_id,
+            message_type=MessageType.ASSISTANT,
+            turn_index=state.turn_index,
+            message_metadata=sandbox_event.model_dump(mode="json", by_alias=True),
+            db_session=db_session,
+        )
+        return
 
     if isinstance(sandbox_event, AgentMessageChunk):
         text = _extract_text_from_content(sandbox_event.content)
@@ -653,6 +729,17 @@ def finalize_persist(
     """End-of-stream persistence hook. Flushes any pending chunks."""
     _save_pending_chunks(db_session, session_id, state, routing_meta)
 
+    # One context-usage row per turn seeds the input-bar ring on reload.
+    if state.latest_context_usage is not None:
+        create_message(
+            session_id=session_id,
+            message_type=MessageType.ASSISTANT,
+            turn_index=state.turn_index,
+            message_metadata=state.latest_context_usage,
+            db_session=db_session,
+        )
+        state.latest_context_usage = None
+
 
 def stream_subagent_turn(
     db_session: DBSession,
@@ -738,6 +825,12 @@ def stream_subagent_turn(
             # Keepalives + terminators pass through untagged.
             if isinstance(sandbox_event, SSEKeepalive):
                 yield SSE_KEEPALIVE
+                continue
+
+            # Context usage / compaction belong to the main session's ring and
+            # transcript; a subagent turn's own values would otherwise persist
+            # against the parent session and mislabel it on reload.
+            if isinstance(sandbox_event, (ContextUsagePacket, CompactionPacket)):
                 continue
 
             # Tag tool + agent-message events with routing _meta BEFORE

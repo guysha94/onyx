@@ -96,7 +96,9 @@
             ]
           }
         }
-      ]
+      ],
+      "react-native-enriched-markdown",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true

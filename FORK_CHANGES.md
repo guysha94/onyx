@@ -36,6 +36,7 @@ These exist only in the fork; upstream never touches them.
 | `backend/tests/daily/connectors/monday/` | daily connector test |
 | `docs/connectors/monday.md` | user-facing setup guide |
 | `web/lib/opal/src/logos/monday.tsx` | `SvgMonday` logo |
+| `deployment/docker_compose/docker-compose.gpu.yml` | NVIDIA GPU reservations for model servers (4090 / WSL2) |
 | `FORK_CHANGES.md` | this manifest |
 
 ## Shared-file edits (conflict-prone — re-apply after each sync)

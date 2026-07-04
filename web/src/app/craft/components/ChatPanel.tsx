@@ -9,6 +9,7 @@ import {
   useHasSession,
   useIsRunning,
   useIsInterrupting,
+  useWasInterrupted,
   useOutputPanelOpen,
   useToggleOutputPanel,
   useBuildSessionStore,
@@ -48,7 +49,7 @@ import SubagentView from "@/app/craft/components/SubagentView";
 import SandboxStatusIndicator from "@/app/craft/components/SandboxStatusIndicator";
 import UpgradePlanModal from "@/app/craft/components/UpgradePlanModal";
 import IconButton from "@/refresh-components/buttons/IconButton";
-import { SvgSidebar, SvgChevronDown } from "@opal/icons";
+import { SvgSidebar, SvgChevronDown, SvgStopCircle } from "@opal/icons";
 import { Button as OpalButton, Tooltip } from "@opal/components";
 import { useBuildContext } from "@/app/craft/contexts/BuildContext";
 import useScreenSize from "@/hooks/useScreenSize";
@@ -88,6 +89,7 @@ export default function BuildChatPanel({
   const hasSession = useHasSession();
   const isRunning = useIsRunning();
   const displayIsRunning = isRunning || scheduledRunInFlight;
+  const wasInterrupted = useWasInterrupted();
   const { setLeftSidebarFolded, leftSidebarFolded, videoBackgroundEnabled } =
     useBuildContext();
   const { isMobile } = useScreenSize();
@@ -112,6 +114,25 @@ export default function BuildChatPanel({
   >({});
   const selectedModel =
     (sessionId ? modelBySession[sessionId] : undefined) ?? sessionModel;
+
+  const contextUsage = useMemo(() => {
+    const usage = session?.contextUsage;
+    if (!usage) return null;
+    let limit: number | null = null;
+    if (selectedModel) {
+      const provider = llmProviders?.find(
+        (p) => p.provider === selectedModel.provider
+      );
+      const config = provider?.model_configurations.find(
+        (m) => m.name === selectedModel.modelName
+      );
+      limit = config?.max_input_tokens ?? null;
+    }
+    return {
+      usedTokens: usage.usedTokens,
+      contextLimit: limit,
+    };
+  }, [session?.contextUsage, selectedModel, llmProviders]);
 
   // Main-column view mode: chat (main agent) vs a subagent transcript.
   const viewedSubagentSessionId = useViewedSubagentSessionId();
@@ -691,9 +712,17 @@ export default function BuildChatPanel({
                       autoScrollEnabled={isAtBottom}
                       scrollContainerRef={scrollContainerRef}
                       trailingAssistantSlot={
-                        <LiveApprovalsRegion
-                          sessionId={sessionId ?? existingSessionId ?? null}
-                        />
+                        <>
+                          {wasInterrupted && !displayIsRunning && (
+                            <div className="flex items-center gap-2 text-sm text-text-03">
+                              <SvgStopCircle className="size-4 shrink-0 stroke-text-03" />
+                              <span>Response stopped</span>
+                            </div>
+                          )}
+                          <LiveApprovalsRegion
+                            sessionId={sessionId ?? existingSessionId ?? null}
+                          />
+                        </>
                       }
                     />
                   )}
@@ -719,7 +748,7 @@ export default function BuildChatPanel({
                             "flex items-center justify-center",
                             "w-8 h-8 rounded-full",
                             "bg-background-neutral-inverted-00 border border-border-01",
-                            "shadow-01 hover:shadow-02",
+                            "shadow-box-01 hover:shadow-box-02",
                             "transition-all duration-200",
                             "hover:bg-background-tint-inverted-01"
                           )}
@@ -772,6 +801,7 @@ export default function BuildChatPanel({
                     queuedMessages={queuedMessages}
                     onQueueMessage={handleQueueMessage}
                     onRemoveQueuedMessage={handleRemoveQueuedMessage}
+                    contextUsage={contextUsage}
                   />
                 </div>
               </div>
