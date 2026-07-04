@@ -154,6 +154,11 @@ export interface LinearCredentialJson {
   linear_access_token: string;
 }
 
+// FORK: monday
+export interface MondayCredentialJson {
+  monday_api_token: string;
+}
+
 export interface HubSpotCredentialJson {
   hubspot_access_token: string;
 }
@@ -326,6 +331,8 @@ export const credentialTemplates: Record<ValidSources, any> = {
   } as GongCredentialJson,
   zulip: { zuliprc_content: "" } as ZulipCredentialJson,
   linear: { linear_access_token: "" } as LinearCredentialJson,
+  // FORK: monday
+  monday: { monday_api_token: "" } as MondayCredentialJson,
   hubspot: { hubspot_access_token: "" } as HubSpotCredentialJson,
   document360: {
     portal_id: "",
@@ -568,6 +575,9 @@ export const credentialDisplayNames: Record<string, string> = {
 
   // Linear
   linear_access_token: "Linear Access Token",
+
+  // FORK: monday
+  monday_api_token: "Monday.com API Token",
 
   // HubSpot
   hubspot_access_token: "HubSpot Access Token",

@@ -1,0 +1,32 @@
+# GPU override for local Docker Compose deployments (Windows + WSL2 / Linux).
+#
+# Requires NVIDIA drivers on the host and the NVIDIA Container Toolkit inside the
+# Docker/WSL2 environment. On Docker Desktop for Windows, enable GPU support in
+# Settings → Resources → WSL integration and install the toolkit in your WSL distro.
+#
+# Usage (production-style):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --wait
+#
+# Dev + watch + GPU:
+#   bin/dev
+#   # or: docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.gpu.yml watch
+
+x-gpu-reservation: &gpu-reservation
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  inference_model_server:
+    <<: *gpu-reservation
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+
+  indexing_model_server:
+    <<: *gpu-reservation
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
