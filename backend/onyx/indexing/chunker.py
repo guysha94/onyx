@@ -39,15 +39,10 @@ DEFAULT_CONTEXTUAL_RAG_RESERVED_TOKENS = MAX_CONTEXT_TOKENS * (
 logger = setup_logger()
 
 
-<<<<<<< HEAD
 def _get_metadata_suffix_for_document_index(
     metadata: dict[str, str | list[str]],
     include_separator: bool = False,
     source: DocumentSource | None = None,
-=======
-def get_metadata_suffix_for_document_index(
-    metadata: dict[str, str | list[str]], include_separator: bool = False
->>>>>>> cba40dab1 (feat(reindex): reindex-port flow — copy & re-embed live chunks into the new index (#11977))
 ) -> tuple[str, str]:
     """
     Returns the metadata as a natural language string representation with all of the keys and values
@@ -222,15 +217,10 @@ class Chunker:
             (
                 metadata_suffix_semantic,
                 metadata_suffix_keyword,
-<<<<<<< HEAD
             ) = _get_metadata_suffix_for_document_index(
                 document.metadata,
                 include_separator=True,
                 source=document.source,
-=======
-            ) = get_metadata_suffix_for_document_index(
-                document.metadata, include_separator=True
->>>>>>> cba40dab1 (feat(reindex): reindex-port flow — copy & re-embed live chunks into the new index (#11977))
             )
             metadata_tokens = len(self.tokenizer.encode(metadata_suffix_semantic))
 
