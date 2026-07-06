@@ -11,6 +11,8 @@ import { ValidSources } from "@/lib/types";
 import { cn } from "@opal/utils";
 import Truncated from "@/refresh-components/texts/Truncated";
 import Text from "@/refresh-components/texts/Text";
+// FORK: miro
+import { buildImgUrl } from "@/app/app/components/files/images/utils";
 
 interface DocumentMetadataBlockProps {
   modal?: boolean;
@@ -99,6 +101,16 @@ export default function ChatDocumentDisplay({
 
       {hasMetadata && (
         <DocumentMetadataBlock modal={modal} document={document} />
+      )}
+
+      {/* Thumbnail (e.g. Miro image assets) - FORK: miro */}
+      {document.image_file_id && (
+        <img
+          src={buildImgUrl(document.image_file_id)}
+          alt={title}
+          loading="lazy"
+          className="w-full max-h-40 object-cover rounded-8 border border-border-01"
+        />
       )}
 
       <Text as="p" className="line-clamp-2 text-left" secondaryBody text03>

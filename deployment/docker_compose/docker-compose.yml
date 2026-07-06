@@ -71,7 +71,7 @@ services:
     #   - "8080:8080"
     environment:
       # Auth Settings
-      - AUTH_TYPE=${AUTH_TYPE:-basic}
+      - AUTH_TYPE=${AUTH_TYPE:-google_oauth}
       - FILE_STORE_BACKEND=${FILE_STORE_BACKEND:-s3}
       - POSTGRES_HOST=${POSTGRES_HOST:-relational_db}
       - OPENSEARCH_HOST=${OPENSEARCH_HOST:-opensearch}
@@ -404,7 +404,7 @@ services:
       - bootstrap.memory_lock=true # Disable JVM heap memory swapping.
       # Java heap should be ~50% of memory limit. For now we assume a limit of
       # 4g although in practice the container can request more than this.
-      # See https://opster.com/guides/opensearch/opensearch-basics/opensearch-heap-size-usage-and-jvm-garbage-collection/
+      # See https://opster.com/guides/opensearch/opensearch-google_oauths/opensearch-heap-size-usage-and-jvm-garbage-collection/
       # Xms is the starting size, Xmx is the maximum size. These should be the
       # same.
       - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"

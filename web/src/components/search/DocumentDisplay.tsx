@@ -9,6 +9,8 @@ import { openDocument } from "@/lib/search/utils";
 import { SubQuestionDetail } from "@/app/app/interfaces";
 import { ValidSources } from "@/lib/types";
 import { Card } from "@/components/ui/card";
+// FORK: miro
+import { buildImgUrl } from "@/app/app/components/files/images/utils";
 
 export const buildDocumentSummaryDisplay = (
   matchHighlights: string[],
@@ -155,6 +157,16 @@ export function CompactDocumentCard({
             {document.semantic_identifier ?? document.document_id}
           </Text>
         </div>
+
+        {/* Thumbnail (e.g. Miro image assets) - FORK: miro */}
+        {document.image_file_id && (
+          <img
+            src={buildImgUrl(document.image_file_id)}
+            alt={document.semantic_identifier ?? document.document_id}
+            loading="lazy"
+            className="w-full max-h-32 object-cover rounded-8 border border-border-01"
+          />
+        )}
 
         {document.blurb && (
           <Text

@@ -39,6 +39,7 @@ import {
   SvgHubspot,
   SvgJira,
   SvgLinear,
+  SvgMiro, // FORK: miro
   SvgMonday, // FORK: monday
   SvgLoopio,
   SvgMediawiki,
@@ -270,6 +271,13 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     displayName: "Monday.com",
     category: SourceCategory.TicketingAndTaskManagement,
     docs: `${DOCS_ADMINS_PATH}/connectors/monday`,
+  },
+  // FORK: miro
+  miro: {
+    icon: SvgMiro,
+    displayName: "Miro",
+    category: SourceCategory.Wiki,
+    docs: `${DOCS_ADMINS_PATH}/connectors/miro`,
   },
   freshdesk: {
     icon: SvgFreshdesk,

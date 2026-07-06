@@ -608,6 +608,7 @@ export enum ValidSources {
   // Federated Connectors
   FederatedSlack = "federated_slack",
   Monday = "monday", // FORK: monday
+  Miro = "miro", // FORK: miro
 }
 
 export const federatedSourceToRegularSource = (

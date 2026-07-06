@@ -13,6 +13,8 @@ import { Interactive } from "@opal/core";
 import Truncated from "@/refresh-components/texts/Truncated";
 import { timeAgo } from "@opal/time";
 import { useMemo } from "react";
+// FORK: miro
+import { buildImgUrl } from "@/app/app/components/files/images/utils";
 
 export interface SearchResultCardProps {
   /** The search result document to display */
@@ -79,6 +81,16 @@ export default function SearchCard({
           {/* Body Row */}
           <div className="px-1 pb-1">
             <Section alignItems="start" gap={0.25}>
+              {/* Thumbnail (e.g. Miro image assets) - FORK: miro */}
+              {document.image_file_id && (
+                <img
+                  src={buildImgUrl(document.image_file_id)}
+                  alt={document.semantic_identifier}
+                  loading="lazy"
+                  className="w-full max-h-40 object-cover rounded-8 border border-border-01"
+                />
+              )}
+
               {/* Metadata */}
               <Section flexDirection="row" justifyContent="start" gap={0.25}>
                 {(document.primary_owners ?? []).map((owner, index) => (

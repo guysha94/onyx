@@ -24,8 +24,13 @@ COPY package.json bun.lock tsconfig.json ./
 COPY lib/opal/ ./lib/opal/
 COPY lib/shared/ ./lib/shared/
 
-# Install dependencies. opal's `prepare` script builds dist/ as part of install.
-RUN bun install --frozen-lockfile
+# Install dependencies without running lifecycle scripts, then build the workspace
+# packages explicitly. `node` (used by lib/shared's build:tokens) can't resolve
+# packages from bun's install cache until they're fully linked to node_modules —
+# running the prepare scripts after install avoids the chicken-and-egg problem.
+RUN bun install --frozen-lockfile --ignore-scripts
+RUN cd lib/shared && bun run build
+RUN cd lib/opal && bun run build
 
 # pull in remaining source code
 COPY . .

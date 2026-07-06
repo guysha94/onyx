@@ -71,6 +71,10 @@ export interface OnyxDocument extends MinimalOnyxDocument {
   db_doc_id?: number;
   is_internet: boolean;
   validationState?: null | "good" | "bad";
+  // File-store id of an associated image chunk (e.g. Miro assets). When set,
+  // result cards render a thumbnail via `GET /api/chat/file/{image_file_id}`.
+  // FORK: miro
+  image_file_id?: string | null;
 }
 
 export interface LoadedOnyxDocument extends OnyxDocument {
@@ -268,6 +272,8 @@ export interface SearchDocWithContent {
   secondary_owners?: string[] | null;
   is_internet: boolean;
   content?: string | null;
+  // File-store id of an associated image chunk (e.g. Miro assets). FORK: miro
+  image_file_id?: string | null;
 }
 
 /**

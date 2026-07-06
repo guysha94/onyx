@@ -1388,6 +1388,31 @@ For example, specifying .*-alerts as a "channel to exclude" will cause the conne
     ],
     advanced_values: [],
   },
+  // FORK: miro
+  miro: {
+    description: "Configure Miro connector",
+    values: [
+      {
+        type: "list",
+        query: "Enter board IDs to index (optional):",
+        label: "Board IDs",
+        name: "board_ids",
+        optional: true,
+        description:
+          "Restrict indexing to specific boards. Leave empty to index all boards the access token can access. Board IDs appear in the Miro board URL (e.g. .../board/uXjVNAc1z9g=/).",
+      },
+      {
+        type: "text",
+        query: "Enter a team ID to index (optional):",
+        label: "Team ID",
+        name: "team_id",
+        optional: true,
+        description:
+          "Restrict indexing to boards owned by a specific Miro team. Ignored when Board IDs are set.",
+      },
+    ],
+    advanced_values: [],
+  },
   dropbox: {
     description: "Configure Dropbox connector",
     values: [],

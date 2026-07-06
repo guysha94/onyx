@@ -400,7 +400,8 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - SuperPlay homelab fork of Onyx for an internal enterprise AI search platform; parent initiative is Jira AI-61.
 - Docker Compose deployment config lives at `deployment/docker_compose/.env`; env vars apply at container creation — run `docker compose up -d --force-recreate api_server web_server` after changes.
 - Primary Atlassian/Jira instance is `superplaystudio.atlassian.net`.
-- Custom connector priorities include Monday.com, Miro, and Mixpanel; Monday.com connector work tracks Jira AI-69 and follows the Linear connector pattern.
+- Custom connector priorities include Monday.com, Miro, and Mixpanel; Monday.com connector work tracks Jira AI-69 and follows the Linear connector pattern. The Miro connector indexes visual asset boards (images, screenshots, UI mockups, icons — no videos) for game production, targeting multimodal + spatial semantic search, using the Google Drive connector as an architectural reference.
+- Custom source forks (e.g. Monday, Miro) are added via the fork pattern: register only in `backend/onyx/connectors/fork_registry.py` (never edit the body of `backend/onyx/connectors/registry.py`), tag any edits to shared/core files with `# FORK: <name>`, log changes in `FORK_CHANGES.md`, and use simple static API-token auth with `LoadConnector`/`PollConnector` rather than full OAuth for MVP scope.
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
 - Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch).
