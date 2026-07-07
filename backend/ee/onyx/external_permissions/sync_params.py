@@ -12,6 +12,7 @@ from ee.onyx.configs.app_configs import GITHUB_PERMISSION_GROUP_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import GOOGLE_DRIVE_PERMISSION_GROUP_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import JIRA_PERMISSION_DOC_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import JIRA_PERMISSION_GROUP_SYNC_FREQUENCY
+from ee.onyx.configs.app_configs import MONDAY_PERMISSION_DOC_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import SHAREPOINT_PERMISSION_DOC_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import SHAREPOINT_PERMISSION_GROUP_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import SLACK_PERMISSION_DOC_SYNC_FREQUENCY
@@ -25,6 +26,7 @@ from ee.onyx.external_permissions.google_drive.doc_sync import gdrive_doc_sync
 from ee.onyx.external_permissions.google_drive.group_sync import gdrive_group_sync
 from ee.onyx.external_permissions.jira.doc_sync import jira_doc_sync
 from ee.onyx.external_permissions.jira.group_sync import jira_group_sync
+from ee.onyx.external_permissions.monday.doc_sync import monday_doc_sync
 from ee.onyx.external_permissions.perm_sync_types import CensoringFuncType
 from ee.onyx.external_permissions.perm_sync_types import DocSyncFuncType
 from ee.onyx.external_permissions.perm_sync_types import FetchAllDocumentsFunction
@@ -116,6 +118,14 @@ _SOURCE_TO_SYNC_CONFIG: dict[DocumentSource, SyncConfig] = {
             group_sync_frequency=JIRA_PERMISSION_GROUP_SYNC_FREQUENCY,
             group_sync_func=jira_group_sync,
             group_sync_is_cc_pair_agnostic=True,
+        ),
+    ),
+    # FORK: monday — board-level ACL via periodic doc sync (LoadConnector, not checkpointed)
+    DocumentSource.MONDAY: SyncConfig(
+        doc_sync_config=DocSyncConfig(
+            doc_sync_frequency=MONDAY_PERMISSION_DOC_SYNC_FREQUENCY,
+            doc_sync_func=monday_doc_sync,
+            initial_index_should_sync=False,
         ),
     ),
     # Groups are not needed for Slack.

@@ -1,6 +1,7 @@
 from onyx.connectors.confluence.connector import ConfluenceConnector
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
 from onyx.connectors.interfaces import BaseConnector
+from onyx.connectors.monday.connector import MondayConnector
 from onyx.connectors.sharepoint.connector import SharepointConnector
 
 
@@ -27,6 +28,11 @@ def validate_drive_perm_sync(connector: GoogleDriveConnector) -> None:
     connector creation instead of every external-group-sync tick.
     """
     connector.probe_directory_admin_permission()
+
+
+def validate_monday_perm_sync(connector: MondayConnector) -> None:
+    """Validate that the API token can read board ACL metadata."""
+    connector.validate_perm_sync()
 
 
 def validate_sharepoint_perm_sync(connector: SharepointConnector) -> None:
@@ -58,3 +64,5 @@ def validate_perm_sync(connector: BaseConnector) -> None:
         validate_drive_perm_sync(connector)
     elif isinstance(connector, SharepointConnector):
         validate_sharepoint_perm_sync(connector)
+    elif isinstance(connector, MondayConnector):
+        validate_monday_perm_sync(connector)
