@@ -5,6 +5,7 @@ from datetime import timezone
 from typing import Any
 from typing import cast
 
+from onyx.access.models import ExternalAccess
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
@@ -13,14 +14,20 @@ from onyx.connectors.exceptions import ConnectorValidationError
 from onyx.connectors.exceptions import CredentialExpiredError
 from onyx.connectors.exceptions import InsufficientPermissionsError
 from onyx.connectors.interfaces import GenerateDocumentsOutput
+from onyx.connectors.interfaces import GenerateSlimDocumentOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
+from onyx.connectors.interfaces import SlimConnector
+from onyx.connectors.interfaces import SlimConnectorWithPermSync
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
 from onyx.connectors.models import ImageSection
+from onyx.connectors.models import SlimDocument
 from onyx.connectors.models import TextSection
+from onyx.connectors.monday.access import get_board_permissions
+from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -129,10 +136,96 @@ query MondayNextItemsPage($cursor: String!, $itemsLimit: Int!) {
 """
 )
 
+_SLIM_ITEM_FIELDS_FRAGMENT = """
+fragment SlimItemFields on Item {
+    id
+    url
+    updated_at
+    subscribers {
+        email
+    }
+}
+"""
+
+_SLIM_BOARD_ITEMS_PAGE_QUERY = (
+    _SLIM_ITEM_FIELDS_FRAGMENT
+    + """
+query MondaySlimBoardItemsPage($boardId: ID!, $itemsLimit: Int!) {
+    boards(ids: [$boardId]) {
+        id
+        items_page(limit: $itemsLimit) {
+            cursor
+            items {
+                ...SlimItemFields
+            }
+        }
+    }
+}
+"""
+)
+
+_SLIM_NEXT_ITEMS_PAGE_QUERY = (
+    _SLIM_ITEM_FIELDS_FRAGMENT
+    + """
+query MondaySlimNextItemsPage($cursor: String!, $itemsLimit: Int!) {
+    next_items_page(limit: $itemsLimit, cursor: $cursor) {
+        cursor
+        items {
+            ...SlimItemFields
+        }
+    }
+}
+"""
+)
+
 _VALIDATE_QUERY = """
 query MondayValidate {
     me {
         id
+    }
+}
+"""
+
+_BOARD_ACCESS_QUERY = """
+query MondayBoardAccess($boardId: ID!) {
+    boards(ids: [$boardId]) {
+        id
+        board_kind
+        permissions
+        owners {
+            email
+        }
+        subscribers {
+            email
+        }
+        team_owners(limit: 100, page: 1) {
+            id
+            users(limit: 100, page: 1) {
+                email
+            }
+        }
+        team_subscribers(limit: 100, page: 1) {
+            id
+            users(limit: 100, page: 1) {
+                email
+            }
+        }
+        workspace {
+            id
+            kind
+            users_subscribers(limit: 100, page: 1) {
+                email
+            }
+            owners_subscribers(limit: 100, page: 1) {
+                email
+            }
+            teams_subscribers(limit: 100, page: 1) {
+                id
+                users(limit: 100, page: 1) {
+                    email
+                }
+            }
+        }
     }
 }
 """
@@ -195,7 +288,7 @@ def _column_metadata(column_values: list[dict[str, Any]]) -> dict[str, str]:
     return metadata
 
 
-class MondayConnector(LoadConnector, PollConnector):
+class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnectorWithPermSync):
     def __init__(
         self,
         board_ids: list[str] | None = None,
@@ -206,6 +299,7 @@ class MondayConnector(LoadConnector, PollConnector):
         self.workspace_ids = workspace_ids
         self.batch_size = batch_size
         self.monday_api_token: str | None = None
+        self._board_access_data_cache: dict[str, dict[str, Any] | None] = {}
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         if "monday_api_token" not in credentials:
@@ -300,6 +394,56 @@ class MondayConnector(LoadConnector, PollConnector):
             raise ConnectorValidationError(
                 f"Unexpected error while validating monday.com connector settings: {exc}"
             ) from exc
+
+    def validate_perm_sync(self) -> None:
+        boards = self._run_query(
+            _LIST_BOARDS_QUERY,
+            {
+                "boardsLimit": 1,
+                "page": 1,
+                "boardIds": _normalize_id_filter(self.board_ids),
+                "workspaceIds": _normalize_id_filter(self.workspace_ids),
+            },
+        ).get("boards", [])
+        if not boards:
+            raise ConnectorValidationError(
+                "monday.com permission sync validation could not find any accessible boards."
+            )
+
+        board_id = str(boards[0]["id"])
+        external_access = get_board_permissions(
+            self._run_query, board_id, add_prefix=False
+        )
+        if external_access is None:
+            raise ConnectorValidationError(
+                "monday.com permission sync requires Enterprise Edition."
+            )
+
+    def _get_board_access_data(self, board_id: str) -> dict[str, Any] | None:
+        if board_id not in self._board_access_data_cache:
+            boards = self._run_query(
+                _BOARD_ACCESS_QUERY, {"boardId": board_id}
+            ).get("boards", [])
+            self._board_access_data_cache[board_id] = (
+                boards[0] if boards else None
+            )
+
+        return self._board_access_data_cache[board_id]
+
+    def _get_item_external_access(
+        self,
+        board_id: str,
+        item: dict[str, Any],
+        *,
+        add_prefix: bool,
+    ) -> ExternalAccess | None:
+        return get_board_permissions(
+            self._run_query,
+            board_id,
+            item=item,
+            add_prefix=add_prefix,
+            board_data=self._get_board_access_data(board_id),
+        )
 
     def _build_document(
         self,
@@ -502,6 +646,166 @@ class MondayConnector(LoadConnector, PollConnector):
 
         if batch:
             yield batch
+
+    def _append_slim_items_to_batch(
+        self,
+        items: list[dict[str, Any]],
+        board_id: str,
+        start: datetime | None,
+        end: datetime | None,
+        batch: list[SlimDocument],
+        *,
+        include_permissions: bool,
+    ) -> Generator[list[SlimDocument], None, list[SlimDocument]]:
+        for item in items:
+            if not _item_in_time_window(item.get("updated_at"), start, end):
+                continue
+
+            item_url = item.get("url") or f"monday__{item['id']}"
+            external_access = (
+                self._get_item_external_access(
+                    board_id=board_id,
+                    item=item,
+                    add_prefix=False,
+                )
+                if include_permissions
+                else None
+            )
+            batch.append(SlimDocument(id=item_url, external_access=external_access))
+            if len(batch) >= self.batch_size:
+                yield batch
+                batch = []
+
+        return batch
+
+    def _process_board_slim_items(
+        self,
+        board_id: str,
+        start: datetime | None,
+        end: datetime | None,
+        batch: list[SlimDocument],
+        *,
+        include_permissions: bool,
+    ) -> Generator[list[SlimDocument], None, list[SlimDocument]]:
+        board_response = self._run_query(
+            _SLIM_BOARD_ITEMS_PAGE_QUERY,
+            {"boardId": board_id, "itemsLimit": _ITEMS_PAGE_LIMIT},
+        ).get("boards", [])
+        if not board_response:
+            logger.warning("monday.com board %s was not returned by the API", board_id)
+            return batch
+
+        items_page = board_response[0].get("items_page") or {}
+        items = items_page.get("items") or []
+        batch = yield from self._append_slim_items_to_batch(
+            items=items,
+            board_id=board_id,
+            start=start,
+            end=end,
+            batch=batch,
+            include_permissions=include_permissions,
+        )
+
+        cursor = items_page.get("cursor")
+        while cursor:
+            next_page = self._run_query(
+                _SLIM_NEXT_ITEMS_PAGE_QUERY,
+                {"cursor": cursor, "itemsLimit": _ITEMS_PAGE_LIMIT},
+            )["next_items_page"]
+            items = next_page.get("items") or []
+            batch = yield from self._append_slim_items_to_batch(
+                items=items,
+                board_id=board_id,
+                start=start,
+                end=end,
+                batch=batch,
+                include_permissions=include_permissions,
+            )
+            cursor = next_page.get("cursor")
+
+        return batch
+
+    def _process_slim_items(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        *,
+        include_permissions: bool,
+    ) -> GenerateSlimDocumentOutput:
+        if self.monday_api_token is None:
+            raise ConnectorMissingCredentialError("Monday")
+
+        self._board_access_data_cache.clear()
+        board_ids = _normalize_id_filter(self.board_ids)
+        workspace_ids = _normalize_id_filter(self.workspace_ids)
+        page = 1
+        batch: list[SlimDocument] = []
+
+        while True:
+            variables: dict[str, Any] = {
+                "boardsLimit": _BOARDS_PAGE_LIMIT,
+                "page": page,
+                "boardIds": board_ids,
+                "workspaceIds": workspace_ids,
+            }
+            boards = self._run_query(_LIST_BOARDS_QUERY, variables).get("boards", [])
+            if not boards:
+                break
+
+            for board in boards:
+                board_id = str(board["id"])
+                batch = yield from self._process_board_slim_items(
+                    board_id=board_id,
+                    start=start,
+                    end=end,
+                    batch=batch,
+                    include_permissions=include_permissions,
+                )
+
+            if board_ids:
+                break
+            if len(boards) < _BOARDS_PAGE_LIMIT:
+                break
+            page += 1
+
+        if batch:
+            yield batch
+
+    def retrieve_all_slim_docs(
+        self,
+        start: SecondsSinceUnixEpoch | None = None,
+        end: SecondsSinceUnixEpoch | None = None,
+        callback: IndexingHeartbeatInterface | None = None,  # noqa: ARG002
+    ) -> GenerateSlimDocumentOutput:
+        start_time = (
+            datetime.fromtimestamp(start, tz=timezone.utc) if start is not None else None
+        )
+        end_time = (
+            datetime.fromtimestamp(end, tz=timezone.utc) if end is not None else None
+        )
+        yield from self._process_slim_items(
+            start=start_time,
+            end=end_time,
+            include_permissions=False,
+        )
+
+    def retrieve_all_slim_docs_perm_sync(
+        self,
+        start: SecondsSinceUnixEpoch | None = None,
+        end: SecondsSinceUnixEpoch | None = None,
+        callback: IndexingHeartbeatInterface | None = None,  # noqa: ARG002
+    ) -> GenerateSlimDocumentOutput:
+        start_time = (
+            datetime.fromtimestamp(start, tz=timezone.utc) if start is not None else None
+        )
+        end_time = (
+            datetime.fromtimestamp(end, tz=timezone.utc) if end is not None else None
+        )
+        yield from self._process_slim_items(
+            start=start_time,
+            end=end_time,
+            include_permissions=True,
+        )
 
     def load_from_state(self) -> GenerateDocumentsOutput:
         yield from self._process_items()

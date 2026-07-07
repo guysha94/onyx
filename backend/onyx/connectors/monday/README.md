@@ -28,6 +28,17 @@ Uses Monday.com API version `2025-10` (see `API-Version` header).
 `poll_source` passes a time window; items outside `updated_at` are skipped
 client-side.
 
+## Permission sync (Enterprise Edition)
+
+When **Document Access** is set to **Auto Sync Permissions** (`access_type=sync`):
+
+- Board-level ACL is resolved from Monday.com (`board_kind`, `permissions`,
+  owners, subscribers, workspace membership) and applied to every indexed item.
+- Team members on a board are expanded to user emails during sync.
+- A background doc-permission sync runs every ~30 minutes to refresh ACLs.
+
+Items inherit their parent board's permissions (same pattern as Jira project ACLs).
+
 ## Local smoke test
 
 ```bash

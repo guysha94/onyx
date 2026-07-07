@@ -629,6 +629,7 @@ export const validAutoSyncSources = [
   ValidSources.GitHub,
   ValidSources.Sharepoint,
   ValidSources.Teams,
+  ValidSources.Monday, // FORK: monday
 ] as const;
 
 // Create a type from the array elements
