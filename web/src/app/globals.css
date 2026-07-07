@@ -1,4 +1,10 @@
 @import "@onyx-ai/opal/root.css";
+/* SuperPlay brand override (Jira AI-72). Must stay unlayered and immediately
+   after the opal import above — cascade layers mean unlayered rules always
+   beat layered ones regardless of source order, so this would silently lose
+   to opal's defaults if wrapped in layer(base) or moved after the layered
+   imports below. See web/src/app/css/theme-superplay.css for details. */
+@import "./css/theme-superplay.css";
 @import "./css/attachment-button.css" layer(base);
 @import "./css/button.css" layer(base);
 @import "./css/content-editable.css" layer(base);
@@ -63,6 +69,25 @@
     display: flex;
     flex-direction: column;
     align-items: start;
+  }
+
+  /* SuperPlay typography (Jira AI-72): raw h1/h2 tags (e.g. in rendered
+     markdown) use the Newsreader serif, everything else stays sans. Only
+     font-family/weight/tracking are set here — no colors, per AGENTS.md. */
+  h1,
+  h2 {
+    font-family: var(--font-newsreader), ui-serif, Georgia, serif;
+    font-weight: 300;
+    letter-spacing: -0.01em;
+  }
+
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 500;
+    letter-spacing: -0.01em;
   }
 }
 

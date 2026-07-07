@@ -69,3 +69,4 @@ plans/
 !.claude/settings.json
 .understand-anything/
 graphify-out/
+*.code-workspace

@@ -1,47 +1,74 @@
-import Link from "next/link";
-import { SvgOnyxLogo } from "@opal/logos";
+"use client";
+
+import Image from "next/image";
+import Logo from "@/refresh-components/Logo";
+import { Text } from "@opal/components";
+import { markdown } from "@opal/utils";
+import { useSettings } from "@/lib/settings/hooks";
+
+interface AuthFlowContainerProps {
+  children: React.ReactNode;
+  authState?: "signup" | "login" | "join";
+  footerContent?: React.ReactNode;
+}
 
 export default function AuthFlowContainer({
   children,
   authState,
   footerContent,
-}: {
-  children: React.ReactNode;
-  authState?: "signup" | "login" | "join";
-  footerContent?: React.ReactNode;
-}) {
+}: AuthFlowContainerProps) {
+  const { appName } = useSettings();
+
   return (
-    <div className="p-4 flex flex-col items-center justify-center min-h-screen bg-background">
-      <div className="w-full max-w-md flex items-start flex-col bg-background-tint-00 rounded-16 shadow-lg shadow-box-02 p-6">
-        <SvgOnyxLogo size={44} className="text-theme-primary-05" />
-        <div className="w-full mt-3">{children}</div>
-      </div>
-      {authState === "login" && (
-        <div className="text-sm mt-6 text-center w-full text-text-03 mainUiBody mx-auto">
-          {footerContent ?? (
-            <>
-              New to Onyx?{" "}
-              <Link
-                href="/auth/signup"
-                className="text-text-05 mainUiAction underline transition-colors duration-200"
-              >
-                Create an Account
-              </Link>
-            </>
+    <div className="flex min-h-screen w-full bg-background">
+      <div className="flex w-full flex-col items-center justify-center px-6 py-16 sm:px-10 lg:w-1/2 lg:px-20">
+        <div className="flex w-full max-w-md flex-col items-start">
+          <Logo folded size={40} className="text-theme-primary-05" />
+          <div className="mt-8 w-full">{children}</div>
+
+          {authState === "login" && (
+            <div className="mt-8 w-full text-center">
+              {footerContent ? (
+                <p className="font-main-ui-body text-text-03">
+                  {footerContent}
+                </p>
+              ) : (
+                <Text as="p" font="main-ui-body" color="text-03">
+                  {markdown(
+                    `New to ${appName}? [Create an Account](/auth/signup)`
+                  )}
+                </Text>
+              )}
+            </div>
+          )}
+
+          {authState === "signup" && (
+            <div className="mt-8 w-full text-center">
+              <Text as="p" font="main-ui-body" color="text-03">
+                {markdown(
+                  "Already have an account? [Sign In](/auth/login?autoRedirectToSignup=false)"
+                )}
+              </Text>
+            </div>
           )}
         </div>
-      )}
-      {authState === "signup" && (
-        <div className="text-sm mt-6 text-center w-full text-text-03 mainUiBody mx-auto">
-          Already have an account?{" "}
-          <Link
-            href="/auth/login?autoRedirectToSignup=false"
-            className="text-text-05 mainUiAction underline transition-colors duration-200"
-          >
-            Sign In
-          </Link>
-        </div>
-      )}
+      </div>
+
+      {/* Illustrated warm panel — hidden on mobile/tablet per the responsive
+          design pass; only the form matters below the `lg` breakpoint. */}
+      <div
+        aria-hidden="true"
+        className="relative hidden w-1/2 shrink-0 items-center justify-center border-l border-border-01 bg-background-tint-02 lg:flex"
+      >
+        <Image
+          src="/peon_hello.png"
+          alt=""
+          width={520}
+          height={520}
+          priority
+          className="h-auto w-full max-w-sm object-contain px-12"
+        />
+      </div>
     </div>
   );
 }

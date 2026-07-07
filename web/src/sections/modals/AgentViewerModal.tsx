@@ -37,6 +37,7 @@ import DocumentSetCard from "@/sections/cards/DocumentSetCard";
 import { getDisplayName } from "@/lib/languageModels/utils";
 import { useLLMProviders } from "@/lib/languageModels/hooks";
 import { Interactive } from "@opal/core";
+import { useSettings } from "@/lib/settings/hooks";
 
 /**
  * Read-only MCP Server card for the viewer modal.
@@ -171,6 +172,7 @@ export interface AgentViewerModalProps {
 export default function AgentViewerModal({ agent }: AgentViewerModalProps) {
   const agentViewerModal = useModal();
   const router = useRouter();
+  const { appName } = useSettings();
   const { allRecentFiles } = useProjectsContext();
   const { llmProviders } = useLLMProviders(agent.id);
 
@@ -259,7 +261,7 @@ export default function AgentViewerModal({ agent }: AgentViewerModalProps) {
             )}
             <Content
               icon={SvgUser}
-              title={agent.owner?.email ?? "Onyx"}
+              title={agent.owner?.email ?? appName}
               sizePreset="main-ui"
               variant="body"
               color="muted"

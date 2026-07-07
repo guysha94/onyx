@@ -9,11 +9,14 @@ async function fetchAppName(): Promise<string> {
       return enterprise.application_name.trim();
     }
   }
-  return "Onyx";
+  return "SuperPlay";
 }
 
 export async function generateFaviconMetadata(): Promise<Metadata["icons"]> {
-  let iconSrc = "/onyx.ico";
+  // "/favicon.ico" (web/public/favicon.ico) holds the whitelabeled default icon.
+  // NOTE: "/onyx.ico" also exists in web/public but is the original, un-rebranded
+  // asset — it must not be used as the default here.
+  let iconSrc = "/favicon.ico";
 
   if (SERVER_SIDE_ONLY__PAID_ENTERPRISE_FEATURES_ENABLED) {
     const enterprise = await fetchEnterpriseSettingsSS();

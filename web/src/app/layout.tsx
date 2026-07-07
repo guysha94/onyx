@@ -12,7 +12,7 @@ import {
   WebVitals,
 } from "@/lib/analytics/shared";
 import Script from "next/script";
-import { DM_Mono, Hanken_Grotesk } from "next/font/google";
+import { Geist_Mono, Inter, Newsreader } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import StatsOverlayLoader from "@/components/dev/StatsOverlayLoader";
@@ -22,9 +22,9 @@ import LicenseExpiryBanner from "@/sections/LicenseExpiryBanner";
 import ProductGatingWrapper from "@/providers/ProductGatingWrapper";
 import SWRConfigProvider from "@/providers/SWRConfigProvider";
 
-const hankenGrotesk = Hanken_Grotesk({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-hanken-grotesk",
+  variable: "--font-inter",
   display: "swap",
   fallback: [
     "-apple-system",
@@ -35,10 +35,16 @@ const hankenGrotesk = Hanken_Grotesk({
   ],
 });
 
-const dmMono = DM_Mono({
-  weight: "400",
+const newsreader = Newsreader({
   subsets: ["latin"],
-  variable: "--font-dm-mono",
+  variable: "--font-newsreader",
+  display: "swap",
+  fallback: ["ui-serif", "Georgia", "serif"],
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
   display: "swap",
   fallback: [
     "SF Mono",
@@ -67,7 +73,7 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <html
       lang="en"
-      className={cn(hankenGrotesk.variable, dmMono.variable)}
+      className={cn(inter.variable, newsreader.variable, geistMono.variable)}
       suppressHydrationWarning
     >
       <head>
@@ -111,7 +117,7 @@ export default function Layout({ children }: LayoutProps) {
         )}
       </head>
 
-      <body className={`relative font-hanken`}>
+      <body className="relative font-sans antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

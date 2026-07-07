@@ -45,7 +45,7 @@ export default function LoginPage({
         authTypeMetadata.authType !== AuthType.CLOUD &&
         // basic auth is handled below w/ the EmailPasswordForm
         authTypeMetadata.authType !== AuthType.BASIC && (
-          <div className="flex flex-col w-full gap-4">
+          <div className="flex flex-col w-full gap-6">
             <LoginText />
             <SignInButton
               authorizeUrl={authUrl}
@@ -87,7 +87,7 @@ export default function LoginPage({
       )}
 
       {!hidePageRedirect && (
-        <p className="text-center mt-4">
+        <Text as="p" text03 mainUiBody className="text-center mt-6">
           Don&apos;t have an account?{" "}
           <span
             onClick={() => {
@@ -97,11 +97,11 @@ export default function LoginPage({
                 window.location.href = "/auth/signup";
               }
             }}
-            className="text-link font-medium cursor-pointer"
+            className="text-action-link-05 font-medium cursor-pointer hover:text-action-link-06"
           >
             Create an account
           </span>
-        </p>
+        </Text>
       )}
     </div>
   );

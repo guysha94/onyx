@@ -393,7 +393,8 @@ to the codebase can be found in the "Engineering Best Practices" section of
 
 - Full SSO integration (Google Workspace OAuth, SAML, or OIDC) is required for the SuperPlay deployment, not optional.
 - Prefer Google OAuth over email/password for self-hosted authentication (`AUTH_TYPE=google_oauth`).
-- UI rebrand target is Claude-style conversational UX with SuperPlay branding (superplay.co palette, icons, typography).
+- UI rebrand target is Claude-style conversational UX with SuperPlay branding; match `ticket-analyzer-agent` theme, colors, and fonts (Jira AI-72).
+- Monday connector should support permission sync/inheritance from Monday like the Jira connector.
 
 ## Learned Workspace Facts
 
@@ -404,3 +405,8 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
 - Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch).
+- Compose builds `api_server`, `background`, and `web_server` from local source (`../../backend`, `../../web`).
+- `bin/dev` / `mise run dev` stack `docker-compose.yml` + `docker-compose.dev.yml` + `docker-compose.gpu.yml` with Compose watch.
+- `docker-compose.gpu.yml` enables NVIDIA GPU reservations for inference/indexing model servers (Windows WSL2 / Linux).
+- Fork-only connectors register in `fork_registry.py` (`FORK_CONNECTOR_CLASS_MAP`), not upstream `registry.py`.
+- Homelab web builds use `web/Dockerfile.homelab` (public Docker Hub bases; upstream `web/Dockerfile` requires paid `dhi.io` auth).

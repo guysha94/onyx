@@ -241,7 +241,7 @@ export const renderMarkdown = (
   return (
     <div dir="auto">
       <ReactMarkdown
-        className={`prose dark:prose-invert font-main-content-body max-w-full ${textSize}`}
+        className={`prose prose-onyx font-main-content-body max-w-full ${textSize}`}
         components={markdownComponents}
         remarkPlugins={[
           remarkGfm,

@@ -1,0 +1,111 @@
+/*
+ * SuperPlay brand override layer (Jira AI-72).
+ *
+ * Redeclares a subset of the CSS custom properties normally shipped by
+ * @onyx-ai/shared/dist/tokens.css (see that file for the full default
+ * list). Intentionally web-only: web/lib/shared/tokens/*.json (shared with
+ * the mobile app) is left untouched, so this is a fully reversible,
+ * additive diff scoped to onyx/web.
+ *
+ * Must be imported UNLAYERED in globals.css, immediately after the
+ * @onyx-ai/opal/root.css import - see the comment there for why.
+ *
+ * Scope: brand primary (theme-primary-*), warm paper surfaces
+ * (background-tint-* / background-neutral-*), warm borders (border-*),
+ * and a warmed text ramp (text-*). The persona/status ramps
+ * (theme-red/orange/amber/yellow/green/lime/cyan/sky/blue/purple/
+ * magenta-*) are NOT brand colors and are intentionally left alone.
+ *
+ * No h1/h2 styling lives here on purpose - that lives in globals.css's
+ * existing @layer base block, next to the rest of the base element rules.
+ */
+
+:root {
+  /* Brand primary: SuperPlay magenta. 05 is the base CTA color, 04 is the
+     lighter/softer hover state, 06 is the darker/higher-contrast
+     active/pressed state - mirrors the direction of the default ink ramp. */
+  --theme-primary-05: oklch(0.58 0.22 12);
+  --theme-primary-04: oklch(0.65 0.19 12);
+  --theme-primary-06: oklch(0.48 0.23 12);
+
+  /* Warm paper surfaces: background-tint (app chrome / page background). */
+  --background-tint-00: oklch(0.995 0.005 75);
+  --background-tint-01: oklch(0.985 0.008 75);
+  --background-tint-02: oklch(0.96 0.015 75);
+  --background-tint-03: oklch(0.92 0.02 75);
+  --background-tint-04: oklch(0.85 0.02 75);
+
+  /* Warm paper surfaces: background-neutral (cards / inputs / surfaces). */
+  --background-neutral-00: oklch(0.995 0.004 75);
+  --background-neutral-01: oklch(0.985 0.006 75);
+  --background-neutral-02: oklch(0.955 0.01 75);
+  --background-neutral-03: oklch(0.92 0.014 75);
+  --background-neutral-04: oklch(0.85 0.016 75);
+
+  /* Warm border ramp. */
+  --border-01: oklch(0.9 0.015 75);
+  --border-02: oklch(0.82 0.018 75);
+  --border-03: oklch(0.68 0.02 60);
+  --border-04: oklch(0.55 0.02 50);
+  --border-05: oklch(0.22 0.03 25);
+
+  /* Warmed text ramp: text-05 is the strongest/darkest, text-01 the
+     faintest, matching the default alpha-black ramp's contrast steps. */
+  --text-05: oklch(0.22 0.03 25);
+  --text-04: oklch(0.32 0.035 27);
+  --text-03: oklch(0.48 0.03 30);
+  --text-02: oklch(0.6 0.025 30);
+  --text-01: oklch(0.75 0.02 40);
+
+  /* Typography: repoint the design-token font-family variables (consumed
+     directly by @onyx-ai/shared/dist/typography.css's font-* utilities,
+     e.g. font-main-ui-body, and by ad-hoc var(--font-hanken-grotesk) /
+     var(--font-dm-mono) call sites like web/src/app/css/line-item.css) at
+     the new fonts loaded via next/font/google in web/src/app/layout.tsx.
+     This is what actually re-themes text rendered through the Opal Text
+     component, since that component's font presets reference these
+     variables directly rather than the Tailwind font-sans/font-mono
+     utilities. */
+  --font-hanken-grotesk: var(--font-inter), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, sans-serif;
+  --font-dm-mono: var(--font-geist-mono), "SF Mono", Monaco, "Cascadia Code",
+    "Roboto Mono", Consolas, "Courier New", monospace;
+}
+
+.dark {
+  /* Brand primary: SuperPlay magenta (dark). 04 hover moves toward more
+     muted/darker, 06 active moves toward brighter/higher-contrast -
+     mirrors the direction of the default chrome ramp. */
+  --theme-primary-05: oklch(0.72 0.16 12);
+  --theme-primary-04: oklch(0.65 0.15 12);
+  --theme-primary-06: oklch(0.8 0.17 12);
+
+  /* Warm paper surfaces: background-tint (dark). Anchor: #262624. */
+  --background-tint-00: #201f1d;
+  --background-tint-01: #262624;
+  --background-tint-02: #302f2d;
+  --background-tint-03: #3a3937;
+  --background-tint-04: #47453f;
+
+  /* Warm paper surfaces: background-neutral (dark). */
+  --background-neutral-00: #262624;
+  --background-neutral-01: #2c2c2a;
+  --background-neutral-02: #333331;
+  --background-neutral-03: #3a3a38;
+  --background-neutral-04: #45443f;
+
+  /* Warm border ramp (dark). */
+  --border-01: #3a3937;
+  --border-02: #52524e;
+  --border-03: #6b6a63;
+  --border-04: #8c8a80;
+  --border-05: #e8e6dc;
+
+  /* Warmed text ramp (dark): text-05 is the brightest/strongest, text-01
+     the faintest. */
+  --text-05: #e8e6dc;
+  --text-04: #cfccc0;
+  --text-03: #a8a69c;
+  --text-02: #86847a;
+  --text-01: #5c5a52;
+}

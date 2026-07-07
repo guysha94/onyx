@@ -76,12 +76,12 @@ export function AppPopup() {
       <Modal.Content width="sm" height="lg">
         <Modal.Header
           icon={headerIcon}
-          title={popupTitle || "Welcome to Onyx!"}
+          title={popupTitle || `Welcome to ${settings.appName}!`}
         />
         <Modal.Body>
           <div className="overflow-y-auto text-left">
             <ReactMarkdown
-              className="prose prose-neutral dark:prose-invert max-w-full"
+              className="prose prose-onyx max-w-full"
               components={{
                 a: ({ node, ...props }) => (
                   <a
@@ -135,7 +135,7 @@ export function AppPopup() {
                   </FormField.Control>
                   <FormField.Label>
                     <ReactMarkdown
-                      className="prose prose-neutral dark:prose-invert max-w-full"
+                      className="prose prose-onyx max-w-full"
                       components={{
                         a: ({ node, ...props }) => (
                           <a

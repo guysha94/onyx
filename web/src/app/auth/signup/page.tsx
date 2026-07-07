@@ -11,6 +11,7 @@ import AuthErrorDisplay from "@/components/auth/AuthErrorDisplay";
 import Text from "@/refresh-components/texts/Text";
 import { cn } from "@opal/utils";
 import { AuthType } from "@/lib/constants";
+import SignupIntro from "./SignupIntro";
 
 const Page = async (props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -69,14 +70,7 @@ const Page = async (props: {
             cloud ? "" : "gap-6"
           )}
         >
-          <div className="w-full">
-            <Text as="p" headingH2 text05>
-              {cloud ? "Complete your sign up" : "Create account"}
-            </Text>
-            <Text as="p" text03>
-              Get started with Onyx
-            </Text>
-          </div>
+          <SignupIntro cloud={cloud} />
           {cloud && authUrl && (
             <div className="w-full justify-center mt-6">
               <SignInButton authorizeUrl={authUrl} authType={AuthType.CLOUD} />

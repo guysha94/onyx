@@ -52,11 +52,11 @@ export default function Sidebar() {
               <div className="shrink-0 mr-4 z-10">
                 <div
                   className={`rounded-full h-3.5 w-3.5 flex items-center justify-center ${
-                    allowed ? "bg-blue-500" : "bg-background-tint-04"
+                    allowed ? "bg-theme-primary-05" : "bg-background-tint-04"
                   }`}
                 >
                   {formStep === index && (
-                    <div className="h-2 w-2 rounded-full bg-white"></div>
+                    <div className="h-2 w-2 rounded-full bg-background-neutral-inverted-00"></div>
                   )}
                 </div>
               </div>

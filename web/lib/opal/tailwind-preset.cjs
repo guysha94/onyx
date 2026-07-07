@@ -56,8 +56,22 @@ module.exports = {
         "collapsible-up": "collapsible-up 0.2s ease-out",
       },
       fontFamily: {
-        sans: ["Hanken Grotesk", "sans-serif"],
-        hanken: ["Hanken Grotesk", "sans-serif"],
+        sans: [
+          "var(--font-inter)",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
+        ],
+        hanken: [
+          "var(--font-inter)",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
+        ],
       },
       colors: {
         "text-05": "var(--text-05)",

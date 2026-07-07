@@ -14,6 +14,7 @@ import IconButton from "@/refresh-components/buttons/IconButton";
 import { SvgCheckCircle, SvgEdit, SvgUser } from "@opal/icons";
 import { InputHorizontal } from "@opal/layouts";
 import { Hoverable } from "@opal/core";
+import { useSettings } from "@/lib/settings/hooks";
 
 export interface NameStepProps {
   state: OnboardingState;
@@ -25,6 +26,7 @@ const NameStep = React.memo(
     const { userName } = onboardingState.data;
     const { updateName, goToStep, setButtonActive, nextStep } =
       onboardingActions;
+    const { appName } = useSettings();
 
     const isActive = onboardingState.currentStep === OnboardingStep.Name;
     const containerClasses = cn(
@@ -49,7 +51,7 @@ const NameStep = React.memo(
         <InputHorizontal
           responsive
           icon={SvgUser}
-          title="What should Onyx call you?"
+          title={`What should ${appName} call you?`}
           description="We will display this name in the app."
         >
           <InputTypeIn

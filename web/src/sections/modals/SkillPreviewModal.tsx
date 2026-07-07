@@ -12,6 +12,7 @@ import type { SkillPreview } from "@/lib/skills/types";
 import InstructionsDisplayModeToggle, {
   type InstructionsDisplayMode,
 } from "@/sections/skills/InstructionsDisplayModeToggle";
+import { useSettings } from "@/lib/settings/hooks";
 
 interface SkillPreviewModalProps {
   open: boolean;
@@ -22,11 +23,12 @@ interface SkillPreviewModalProps {
 }
 
 function metadataRows(
-  preview: SkillPreview
+  preview: SkillPreview,
+  appName: string
 ): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = [];
   if (preview.source === "builtin") {
-    rows.push({ label: "Created by", value: "Onyx" });
+    rows.push({ label: "Created by", value: appName });
   } else if (preview.author_email) {
     rows.push({ label: "Created by", value: preview.author_email });
   }
@@ -40,6 +42,7 @@ export default function SkillPreviewModal({
   unavailableReason = null,
   onClose,
 }: SkillPreviewModalProps) {
+  const { appName } = useSettings();
   const [instructionsDisplayMode, setInstructionsDisplayMode] =
     useState<InstructionsDisplayMode>("rendered");
   const swrKey = open && skillId ? SWR_KEYS.userSkillPreview(skillId) : null;
@@ -92,7 +95,7 @@ export default function SkillPreviewModal({
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {metadataRows(preview).map((row) => (
+                {metadataRows(preview, appName).map((row) => (
                   <div key={row.label} className="flex flex-col gap-1">
                     <Text font="main-ui-action" color="text-05">
                       {row.label}

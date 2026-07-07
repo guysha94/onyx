@@ -28,6 +28,7 @@ import {
 import { useCreateModal } from "@/refresh-components/contexts/ModalContext";
 import ShareAgentModal from "@/sections/modals/ShareAgentModal";
 import AgentViewerModal from "@/sections/modals/AgentViewerModal";
+import { useSettings } from "@/lib/settings/hooks";
 import { CardItemLayout } from "@/layouts/general-layouts";
 import { Content } from "@opal/layouts";
 import { Interactive } from "@opal/core";
@@ -46,6 +47,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
     [agent.id, pinnedAgents]
   );
   const { user } = useUser();
+  const { appName } = useSettings();
   const businessTier = useTierAtLeast(Tier.BUSINESS);
   const isOwnedByUser = checkUserOwnsAgent(user, agent);
   const canEditAgent = checkUserCanEditAgent(user, agent);
@@ -145,7 +147,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
             <div className="flex flex-col gap-1 py-1 px-2">
               <Content
                 icon={SvgUser}
-                title={agent.owner?.email || "Onyx"}
+                title={agent.owner?.email || appName}
                 sizePreset="secondary"
                 variant="body"
                 color="muted"

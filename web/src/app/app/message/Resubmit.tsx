@@ -12,7 +12,7 @@ interface ResubmitProps {
 export const Resubmit: React.FC<ResubmitProps> = ({ resubmit }) => {
   return (
     <div className="flex flex-col items-center justify-center gap-y-2 mt-4">
-      <p className="text-sm text-neutral-700 dark:text-neutral-300">
+      <p className="text-sm text-text-03">
         There was an error with the response.
       </p>
       <Button onClick={resubmit}>Regenerate</Button>
@@ -38,7 +38,7 @@ export const ErrorBanner = ({
   const [isStackTraceExpanded, setIsStackTraceExpanded] = useState(false);
 
   return (
-    <div className="text-red-700 mt-4 text-sm my-auto">
+    <div className="text-status-error-05 mt-4 text-sm my-auto">
       <Alert variant="broken">
         {getErrorIcon(errorCode)}
         <AlertTitle>{getErrorTitle(errorCode)}</AlertTitle>
@@ -56,7 +56,7 @@ export const ErrorBanner = ({
             </span>
           )}
           {stackTrace && (
-            <div className="mt-2 border-t border-neutral-200 dark:border-neutral-700 pt-2">
+            <div className="mt-2 border-t border-border-01 pt-2">
               <div className="flex flex-1 items-center justify-between">
                 <Button
                   prominence="tertiary"
@@ -71,7 +71,7 @@ export const ErrorBanner = ({
                 />
               </div>
               {isStackTraceExpanded && (
-                <pre className="mt-2 p-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-sm text-xs text-neutral-700 dark:text-neutral-300 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
+                <pre className="mt-2 p-3 bg-background-neutral-02 border border-border-01 rounded-sm text-xs text-text-03 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
                   {stackTrace}
                 </pre>
               )}

@@ -30,14 +30,14 @@ function LLMProviderSkeleton() {
     <div className="flex justify-between h-full w-full p-1 rounded-12 border border-border-01 bg-background-neutral-01 animate-pulse">
       <div className="flex gap-1 p-1 flex-1 min-w-0">
         <div className="h-full p-0.5">
-          <div className="w-4 h-4 rounded-full bg-neutral-200" />
+          <div className="w-4 h-4 rounded-full bg-background-neutral-03" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="h-3 w-1/2 bg-neutral-200 rounded-sm" />
-          <div className="mt-2 h-2 w-3/4 bg-neutral-200 rounded-sm" />
+          <div className="h-3 w-1/2 bg-background-neutral-03 rounded-sm" />
+          <div className="mt-2 h-2 w-3/4 bg-background-neutral-03 rounded-sm" />
         </div>
       </div>
-      <div className="h-6 w-16 bg-neutral-200 rounded-sm" />
+      <div className="h-6 w-16 bg-background-neutral-03 rounded-sm" />
     </div>
   );
 }

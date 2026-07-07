@@ -24,6 +24,19 @@ _LOGO_FILENAME = "__logo__"
 _LOGOTYPE_FILENAME = "__logotype__"
 
 
+def _first_run_default_settings() -> EnterpriseSettings:
+    """Defaults written once, only when a tenant has never saved enterprise
+    settings before. Once an admin saves anything via /admin/theme,
+    store_settings() overwrites this entry and it is never consulted again.
+
+    Kept intentionally minimal (no application_name/logo/greeting copy — those
+    require an uploaded image or human-authored voice/copy and are configured
+    via /admin/theme instead) so a fresh deploy doesn't accidentally ship with
+    stale placeholder text.
+    """
+    return EnterpriseSettings(hide_onyx_branding=True)
+
+
 def load_settings() -> EnterpriseSettings:
     """Loads settings data directly from DB. This should be used primarily
     for checking what is actually in the DB, aka for editing and saving back settings.
@@ -38,7 +51,7 @@ def load_settings() -> EnterpriseSettings:
             **cast(dict, dynamic_config_store.load(KV_ENTERPRISE_SETTINGS_KEY))
         )
     except KvKeyNotFoundError:
-        settings = EnterpriseSettings()
+        settings = _first_run_default_settings()
         dynamic_config_store.store(KV_ENTERPRISE_SETTINGS_KEY, settings.model_dump())
 
     return settings
