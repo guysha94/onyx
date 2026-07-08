@@ -75,6 +75,9 @@ export interface OnyxDocument extends MinimalOnyxDocument {
   // result cards render a thumbnail via `GET /api/chat/file/{image_file_id}`.
   // FORK: miro
   image_file_id?: string | null;
+  // Document.file_id fallback thumbnail source, used when a text chunk (no
+  // image_file_id) is the top hit for an image doc. FORK: miro
+  file_id?: string | null;
 }
 
 export interface LoadedOnyxDocument extends OnyxDocument {
@@ -274,6 +277,9 @@ export interface SearchDocWithContent {
   content?: string | null;
   // File-store id of an associated image chunk (e.g. Miro assets). FORK: miro
   image_file_id?: string | null;
+  // Document.file_id fallback thumbnail source, used when a text chunk (no
+  // image_file_id) is the top hit for an image doc. FORK: miro
+  file_id?: string | null;
 }
 
 /**

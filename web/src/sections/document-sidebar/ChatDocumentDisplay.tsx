@@ -28,7 +28,10 @@ function DocumentMetadataBlock({
 
   return (
     <div className="flex items-center overflow-hidden">
-      {document.updated_at && (
+      {/* FORK: miro - Miro's modifiedAt is a bulk-import timestamp shared
+          across many assets, not a meaningful per-asset update time, so
+          it's hidden here. */}
+      {document.updated_at && document.source_type !== ValidSources.Miro && (
         <DocumentUpdatedAtBadge updatedAt={document.updated_at} modal={modal} />
       )}
 
@@ -103,10 +106,12 @@ export default function ChatDocumentDisplay({
         <DocumentMetadataBlock modal={modal} document={document} />
       )}
 
-      {/* Thumbnail (e.g. Miro image assets) - FORK: miro */}
-      {document.image_file_id && (
+      {/* Thumbnail (e.g. Miro image assets) - FORK: miro. Falls back to
+          file_id when a text chunk (no image_file_id) is the top hit for an
+          image doc. */}
+      {(document.image_file_id ?? document.file_id) && (
         <img
-          src={buildImgUrl(document.image_file_id)}
+          src={buildImgUrl((document.image_file_id ?? document.file_id) as string)}
           alt={title}
           loading="lazy"
           className="w-full max-h-40 object-cover rounded-8 border border-border-01"

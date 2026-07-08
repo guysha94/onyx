@@ -115,8 +115,24 @@ def process_in_batches(
         yield [process_function(obj) for obj in objects[i : i + batch_size]]
 
 
-def get_metadata_keys_to_ignore() -> list[str]:
-    return [IGNORE_FOR_QA]
+# FORK: miro - opaque identifiers that must stay filterable (via
+# Document.metadata / metadata_list, see the exact-match fast path in
+# ee/onyx/search/process_search_query.py) but add no retrieval value as plain
+# embedded/keyword text, so they're excluded from the metadata suffix only.
+_SOURCE_METADATA_KEYS_TO_IGNORE: dict[DocumentSource, list[str]] = {
+    # board_id, miro_item_id, and asset_filename are stored as exact-match Tag
+    # filters (see ee/onyx/search/process_search_query.py::_maybe_exact_lookup)
+    # but must not appear in the embedded metadata suffix — generic filenames
+    # like "image_720.png" would pollute the semantic vectors.
+    DocumentSource.MIRO: ["board_id", "miro_item_id", "asset_filename"],
+}
+
+
+def get_metadata_keys_to_ignore(source: DocumentSource | None = None) -> list[str]:
+    keys = [IGNORE_FOR_QA]
+    if source is not None:
+        keys.extend(_SOURCE_METADATA_KEYS_TO_IGNORE.get(source, []))
+    return keys
 
 
 def _parse_document_source(connector_type: Any) -> DocumentSource | None:

@@ -1,3 +1,4 @@
+import re
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -35,6 +36,7 @@ from onyx.connectors.models import TextSection
 from onyx.db.connector_credential_pair import get_connector_credential_pair
 from onyx.db.document import get_documents_by_ids
 from onyx.db.document import update_docs_content_hash__no_commit
+from onyx.db.document import update_docs_semantic_id__no_commit
 from onyx.db.document import upsert_document_by_connector_credential_pair
 from onyx.db.document import upsert_documents
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
@@ -53,6 +55,9 @@ from onyx.document_index.document_metadata import DocumentMetadata
 from onyx.document_index.interfaces_new import DocumentIndex
 from onyx.document_index.interfaces_new import DocumentInsertionRecord
 from onyx.document_index.interfaces_new import IndexingMetadata
+from onyx.file_processing.image_summarization import (
+    summarize_image_and_title_with_error_handling,
+)
 from onyx.file_processing.image_summarization import summarize_image_with_error_handling
 from onyx.file_store.file_store import get_default_file_store
 from onyx.file_store.staging import promote_staged_file
@@ -114,8 +119,51 @@ class _PendingImageSummarization(BaseModel):
     section: Section
     image_data: bytes
     context_name: str
+    # FORK: miro - when set, generate a title alongside the summary and apply it
+    # to this document's title/semantic_identifier (see process_image_sections).
+    derive_title: bool = False
+    target_document: IndexingDocument | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+# FORK: miro
+_FALLBACK_TITLE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n")
+
+
+# FORK: miro
+def _derive_fallback_title(summary: str, max_words: int = 8) -> str | None:
+    """Synthesize a short title from the first phrase of an image caption when
+    the vision model doesn't return a usable ``TITLE:`` line. Keeps titles
+    informative (rather than falling straight through to a connector-supplied
+    filename/placeholder) even for models that don't follow the requested
+    TITLE/DESCRIPTION format precisely.
+    """
+    cleaned = (summary or "").strip()
+    if not cleaned:
+        return None
+
+    first_chunk = _FALLBACK_TITLE_SPLIT_RE.split(cleaned, maxsplit=1)[0].strip()
+    words = first_chunk.split()
+    if not words:
+        return None
+
+    title = " ".join(words[:max_words]).rstrip(".,;:!? ")
+    return title or None
+
+
+# FORK: miro
+def _fold_heading_into_text(section: Section) -> None:
+    """Fold connector-supplied context carried on ``Section.heading`` (e.g.
+    Miro board/frame/nearby-label context) into the section's own text, so the
+    resulting chunk stays informative even when the vision caption is weak,
+    errored, or unavailable (image extraction disabled / no vision LLM
+    configured). No-op for sections without a heading — i.e. every connector
+    besides Miro is unaffected.
+    """
+    if not section.heading:
+        return
+    section.text = f"{section.text}\n\n{section.heading}" if section.text else section.heading
 
 
 class DocumentBatchPrepareContext(BaseModel):
@@ -727,26 +775,31 @@ def process_image_sections(documents: list[Document]) -> list[IndexingDocument]:
                 "available — images will not be summarized. Configure a "
                 "vision model in the admin LLM settings."
             )
-        # Even without LLM, we still convert to IndexingDocument with base Sections
-        return [
-            IndexingDocument(
-                **document.model_dump(),
-                processed_sections=[
-                    (
-                        Section(
-                            type=section.type,
-                            text="",
-                            link=section.link,
-                            image_file_id=section.image_file_id,
-                            heading=section.heading,
-                        )
-                        if isinstance(section, ImageSection)
-                        else section.model_copy()
+        # Even without LLM, we still convert to IndexingDocument with base Sections.
+        # FORK: miro - fold any connector-supplied heading (board/frame/label
+        # context) in as the section's text so the chunk isn't left empty when
+        # image extraction is disabled or no vision LLM is configured.
+        no_llm_sections: list[list[Section]] = []
+        for document in documents:
+            doc_sections: list[Section] = []
+            for section in document.sections:
+                if isinstance(section, ImageSection):
+                    base_section = Section(
+                        type=section.type,
+                        text="",
+                        link=section.link,
+                        image_file_id=section.image_file_id,
+                        heading=section.heading,
                     )
-                    for section in document.sections
-                ],
-            )
-            for document in documents
+                    _fold_heading_into_text(base_section)
+                    doc_sections.append(base_section)
+                else:
+                    doc_sections.append(section.model_copy())
+            no_llm_sections.append(doc_sections)
+
+        return [
+            IndexingDocument(**document.model_dump(), processed_sections=sections)
+            for document, sections in zip(documents, no_llm_sections)
         ]
 
     indexed_documents: list[IndexingDocument] = []
@@ -758,6 +811,9 @@ def process_image_sections(documents: list[Document]) -> list[IndexingDocument]:
 
     for document in documents:
         processed_sections: list[Section] = []
+        # FORK: miro - pending items for this document, so we can wire up
+        # target_document after the IndexingDocument is constructed below.
+        doc_pending: list[_PendingImageSummarization] = []
 
         for section in document.sections:
             if not isinstance(section, ImageSection):
@@ -782,45 +838,87 @@ def process_image_sections(documents: list[Document]) -> list[IndexingDocument]:
                         "Image file %s not found in FileStore", section.image_file_id
                     )
                     processed_section.text = "[Image could not be processed]"
+                    _fold_heading_into_text(processed_section)
                     continue
 
                 image_data = file_store.read_file(file_id=section.image_file_id).read()
-                pending.append(
-                    _PendingImageSummarization(
-                        section=processed_section,
-                        image_data=image_data,
-                        context_name=file_record.display_name or "Image",
-                    )
+                pending_item = _PendingImageSummarization(
+                    section=processed_section,
+                    image_data=image_data,
+                    context_name=file_record.display_name or "Image",
+                    derive_title=document.derive_title_from_image,
                 )
+                pending.append(pending_item)
+                doc_pending.append(pending_item)
             except Exception as e:
                 logger.error("Error reading image section: %s", e)
                 processed_section.text = "[Error processing image]"
+                _fold_heading_into_text(processed_section)
 
-        indexed_documents.append(
-            IndexingDocument(
-                **document.model_dump(), processed_sections=processed_sections
-            )
+        indexing_document = IndexingDocument(
+            **document.model_dump(), processed_sections=processed_sections
         )
+        indexed_documents.append(indexing_document)
+        for pending_item in doc_pending:
+            pending_item.target_document = indexing_document
 
     # Summarize all images in parallel
     if pending:
 
-        def _summarize(image_data: bytes, context_name: str) -> str:
-            return (
-                summarize_image_with_error_handling(
-                    llm=llm, image_data=image_data, context_name=context_name
+        def _summarize(
+            pending_item: _PendingImageSummarization,
+        ) -> tuple[str, str | None]:
+            """Returns (summary_text, generated_title_or_None)."""
+            if pending_item.derive_title:
+                result = summarize_image_and_title_with_error_handling(
+                    llm=llm,
+                    image_data=pending_item.image_data,
+                    context_name=pending_item.context_name,
                 )
-                or "[Image could not be summarized]"
+                if result is None:
+                    return "[Image could not be summarized]", None
+                return (result.summary or "[Image could not be summarized]"), (
+                    result.title
+                )
+
+            summary = summarize_image_with_error_handling(
+                llm=llm,
+                image_data=pending_item.image_data,
+                context_name=pending_item.context_name,
             )
+            return (summary or "[Image could not be summarized]"), None
 
         results = run_functions_tuples_in_parallel(
-            [(_summarize, (p.image_data, p.context_name)) for p in pending],
+            [(_summarize, (p,)) for p in pending],
             allow_failures=True,
             max_workers=MAX_IMAGE_WORKERS,
         )
 
         for p, result in zip(pending, results):
-            p.section.text = result or "[Error processing image]"
+            if result is None:
+                p.section.text = "[Error processing image]"
+                _fold_heading_into_text(p.section)
+                continue
+            summary_text, generated_title = result
+            p.section.text = summary_text or "[Error processing image]"
+            _fold_heading_into_text(p.section)
+
+            # FORK: miro - apply a title to the document so it feeds
+            # title_prefix (content_vector) and title_vector, instead of a
+            # raw filename. Preference order: (1) the vision model's own
+            # TITLE line, (2) a short title synthesized from the description
+            # for models that ignore the requested TITLE/DESCRIPTION format,
+            # (3) leave the connector-supplied fallback title untouched (it is
+            # itself never a placeholder filename - see
+            # onyx/connectors/miro/connector.py::_build_asset_title).
+            is_placeholder_summary = summary_text.startswith("[") if summary_text else True
+            if p.derive_title and p.target_document is not None:
+                cleaned_title = (generated_title or "").strip() or (
+                    None if is_placeholder_summary else _derive_fallback_title(summary_text)
+                )
+                if cleaned_title:
+                    p.target_document.title = cleaned_title
+                    p.target_document.semantic_identifier = cleaned_title
 
     return indexed_documents
 
@@ -1447,6 +1545,26 @@ def index_doc_batch(
                     },
                     db_session=db_session,
                 )
+
+                # FORK: miro - image summarization can upgrade the title to an
+                # LLM-generated caption AFTER the initial upsert, so write the
+                # final semantic_identifier back to Postgres for docs that opted
+                # into derive_title_from_image. Otherwise the search index has
+                # the good title but the Postgres row stays on the pre-caption
+                # connector title. Scoped to opted-in docs, so other connectors
+                # are unaffected.
+                image_title_updates = {
+                    doc.id: doc.semantic_identifier
+                    for doc in context.indexable_docs
+                    if doc.derive_title_from_image
+                    and doc.id in successfully_indexed_ids
+                    and doc.semantic_identifier
+                }
+                if image_title_updates:
+                    update_docs_semantic_id__no_commit(
+                        ids_to_new_semantic_id=image_title_updates,
+                        db_session=db_session,
+                    )
 
     assert primary_doc_idx_insertion_records is not None
     assert primary_doc_idx_vector_db_write_failures is not None

@@ -158,10 +158,14 @@ export function CompactDocumentCard({
           </Text>
         </div>
 
-        {/* Thumbnail (e.g. Miro image assets) - FORK: miro */}
-        {document.image_file_id && (
+        {/* Thumbnail (e.g. Miro image assets) - FORK: miro. Falls back to
+            file_id when a text chunk (no image_file_id) is the top hit for
+            an image doc. */}
+        {(document.image_file_id ?? document.file_id) && (
           <img
-            src={buildImgUrl(document.image_file_id)}
+            src={buildImgUrl(
+              (document.image_file_id ?? document.file_id) as string
+            )}
             alt={document.semantic_identifier ?? document.document_id}
             loading="lazy"
             className="w-full max-h-32 object-cover rounded-8 border border-border-01"
@@ -179,7 +183,11 @@ export function CompactDocumentCard({
           </Text>
         )}
 
-        {document.updated_at &&
+        {/* FORK: miro - Miro's modifiedAt is a bulk-import timestamp shared
+            across many assets, not a meaningful per-asset update time, so
+            it's hidden here. */}
+        {document.source_type !== ValidSources.Miro &&
+          document.updated_at &&
           !isNaN(new Date(document.updated_at).getTime()) && (
             <Text
               as="p"

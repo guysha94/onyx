@@ -1,3 +1,4 @@
+import re
 from collections.abc import Generator
 
 from sqlalchemy.orm import Session
@@ -14,8 +15,10 @@ from ee.onyx.server.query_and_chat.streaming_models import SearchQueriesPacket
 from onyx.context.search.models import BaseFilters
 from onyx.context.search.models import ChunkSearchRequest
 from onyx.context.search.models import InferenceChunk
+from onyx.context.search.models import Tag
 from onyx.context.search.pipeline import merge_individual_chunks
 from onyx.context.search.pipeline import search_pipeline
+from onyx.context.search.utils import populate_file_ids_on_sections
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.document_index.factory import get_default_document_index
@@ -35,6 +38,50 @@ logger = setup_logger()
 # Users would not find it useful to see a huge list of suggested docs
 # but more than 1 is also likely good as many questions may target more than 1 doc.
 TARGET_NUM_SECTIONS_FOR_LLM_SELECTION = 3
+
+
+# FORK: miro - exact-match fast path for identifier-shaped queries. See
+# _maybe_exact_lookup below. Matches any single-token filename ending in a
+# recognised image extension (no whitespace), covering both hex-hash names
+# (e.g. "1ab6ca7c7db07f88.png") and human-named files (e.g. "image_720.png",
+# "Logo-Final.webp"). Multi-word queries are left to normal hybrid search.
+_MIRO_ASSET_FILENAME_RE = re.compile(
+    r"^[\w.\-]+\.(jpg|jpeg|png|webp|svg|gif)$", re.IGNORECASE
+)
+_MIRO_DOC_ID_PREFIX = "miro__"
+# Bare Miro item ids are opaque alphanumeric/base64-like tokens (e.g.
+# "uXjVH_7LB9o="); requiring a digit is a cheap way to avoid misclassifying
+# plain english search terms (which rarely contain digits) as an identifier.
+_BARE_MIRO_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_=-]{8,}$")
+
+
+def _detect_miro_identifier_tag(query: str) -> Tag | None:
+    """Classifies a search query as a Miro asset filename, full document id,
+    or bare item id, returning the exact-match `Tag` to filter on. Returns
+    `None` when the query looks like free text (e.g. contains whitespace),
+    so the caller runs normal hybrid search instead.
+    """
+    stripped = query.strip()
+    if not stripped or " " in stripped:
+        return None
+
+    if _MIRO_ASSET_FILENAME_RE.match(stripped):
+        return Tag(tag_key="asset_filename", tag_value=stripped)
+
+    if stripped.startswith(_MIRO_DOC_ID_PREFIX):
+        # doc id shape is "miro__<board_id>__<item_id>"; the item id is
+        # reliably the segment after the last "__".
+        remainder = stripped[len(_MIRO_DOC_ID_PREFIX) :]
+        if "__" in remainder:
+            item_id = remainder.rsplit("__", 1)[-1]
+            if item_id:
+                return Tag(tag_key="miro_item_id", tag_value=item_id)
+        return None
+
+    if _BARE_MIRO_ITEM_ID_RE.match(stripped) and any(c.isdigit() for c in stripped):
+        return Tag(tag_key="miro_item_id", tag_value=stripped)
+
+    return None
 
 
 def _run_single_search(
@@ -63,6 +110,47 @@ def _run_single_search(
     )
 
 
+# FORK: miro
+def _maybe_exact_lookup(
+    request: SendSearchQueryRequest,
+    document_index: DocumentIndex,
+    user: User,
+    db_session: Session,
+) -> list[InferenceChunk] | None:
+    """Exact-match fast path for identifier-shaped queries (Miro asset
+    filename / item id / full doc id). When the query is detected as an
+    identifier, runs a search scoped to an exact `Tag` filter on the
+    connector-indexed identifier metadata (see
+    onyx/connectors/miro/connector.py::_item_to_document), reusing the normal
+    `search_pipeline` so ACL, tenant scoping, and post-query censoring are
+    unchanged.
+
+    Returns `None` (never an empty list) both when the query doesn't look
+    like an identifier and when the identifier has no match, so the caller
+    always falls through to normal hybrid search rather than showing no
+    results for a mistyped identifier.
+    """
+    tag = _detect_miro_identifier_tag(request.search_query)
+    if tag is None:
+        return None
+
+    base_filters = request.filters or BaseFilters()
+    exact_filters = base_filters.model_copy(
+        update={"tags": [*(base_filters.tags or []), tag]}
+    )
+
+    chunks = _run_single_search(
+        query=request.search_query,
+        filters=exact_filters,
+        document_index=document_index,
+        user=user,
+        db_session=db_session,
+        num_hits=request.num_hits,
+        hybrid_alpha=request.hybrid_alpha,
+    )
+    return chunks or None
+
+
 def stream_search_query(
     request: SendSearchQueryRequest,
     user: User,
@@ -85,7 +173,12 @@ def stream_search_query(
     original_query = request.search_query
     keyword_expansions: list[str] = []
 
-    if request.run_query_expansion:
+    # FORK: miro - exact-match fast path for identifier-shaped queries.
+    # Skips query expansion entirely when matched, since expanding a pasted
+    # filename/id into keyword queries would only reintroduce fuzzy matches.
+    exact_chunks = _maybe_exact_lookup(request, document_index, user, db_session)
+
+    if exact_chunks is None and request.run_query_expansion:
         try:
             llm = get_default_llm()
             keyword_expansions = expand_keywords(
@@ -113,7 +206,9 @@ def stream_search_query(
         )
 
     # Execute search(es)
-    if not keyword_expansions:
+    if exact_chunks is not None:
+        chunks = exact_chunks
+    elif not keyword_expansions:
         # Single query (original only) - no threading needed
         chunks = _run_single_search(
             query=original_query,
@@ -187,6 +282,11 @@ def stream_search_query(
 
     # Truncate to the requested number of hits
     sections = sections[: request.num_hits]
+
+    # FORK: miro - stamp Document.file_id (Postgres-only, not in the vector
+    # index) onto each chunk. Used as a thumbnail fallback for the rare case
+    # where a text chunk (no image_file_id) is the top hit for an image doc.
+    populate_file_ids_on_sections(sections, db_session)
 
     # Apply LLM document selection if requested
     # num_docs_fed_to_llm_selection specifies how many sections to feed to the LLM for selection

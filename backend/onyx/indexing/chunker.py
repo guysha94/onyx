@@ -35,7 +35,9 @@ logger = setup_logger()
 
 
 def _get_metadata_suffix_for_document_index(
-    metadata: dict[str, str | list[str]], include_separator: bool = False
+    metadata: dict[str, str | list[str]],
+    include_separator: bool = False,
+    source: DocumentSource | None = None,
 ) -> tuple[str, str]:
     """
     Returns the metadata as a natural language string representation with all of the keys and values
@@ -46,8 +48,9 @@ def _get_metadata_suffix_for_document_index(
 
     metadata_str = "Metadata:\n"
     metadata_values = []
+    keys_to_ignore = get_metadata_keys_to_ignore(source)
     for key, value in metadata.items():
-        if key in get_metadata_keys_to_ignore():
+        if key in keys_to_ignore:
             continue
 
         value_str = ", ".join(value) if isinstance(value, list) else value
@@ -210,7 +213,9 @@ class Chunker:
                 metadata_suffix_semantic,
                 metadata_suffix_keyword,
             ) = _get_metadata_suffix_for_document_index(
-                document.metadata, include_separator=True
+                document.metadata,
+                include_separator=True,
+                source=document.source,
             )
             metadata_tokens = len(self.tokenizer.encode(metadata_suffix_semantic))
 

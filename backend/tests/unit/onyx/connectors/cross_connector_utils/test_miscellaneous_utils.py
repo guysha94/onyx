@@ -2,6 +2,10 @@ import datetime
 
 import pytest
 
+from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
+    get_metadata_keys_to_ignore,
+)
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
 
 
@@ -51,3 +55,26 @@ def test_time_str_to_utc_raises_on_impossible_dates() -> None:
     ):
         with pytest.raises(ValueError):
             time_str_to_utc(bad)
+
+
+def test_get_metadata_keys_to_ignore_no_source_returns_global_keys_only() -> None:
+    keys = get_metadata_keys_to_ignore()
+    assert "board_id" not in keys
+    assert "miro_item_id" not in keys
+
+
+def test_get_metadata_keys_to_ignore_miro_adds_source_specific_keys() -> None:
+    """FORK: miro - board_id/miro_item_id are opaque identifiers that add no
+    retrieval value as embedded text (they must stay in Document.metadata /
+    metadata_list for exact-match filtering, but are excluded from the
+    embedded metadata suffix)."""
+    keys = get_metadata_keys_to_ignore(DocumentSource.MIRO)
+    assert "board_id" in keys
+    assert "miro_item_id" in keys
+
+
+def test_get_metadata_keys_to_ignore_other_sources_unaffected() -> None:
+    """The Miro-only exclusions must not leak into other connectors."""
+    keys = get_metadata_keys_to_ignore(DocumentSource.WEB)
+    assert "board_id" not in keys
+    assert "miro_item_id" not in keys
