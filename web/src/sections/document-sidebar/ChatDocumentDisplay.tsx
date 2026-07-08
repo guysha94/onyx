@@ -118,9 +118,13 @@ export default function ChatDocumentDisplay({
         />
       )}
 
-      <Text as="p" className="line-clamp-2 text-left" secondaryBody text03>
-        {buildDocumentSummaryDisplay(document.match_highlights, document.blurb)}
-      </Text>
+      {/* FORK: miro - Gemini captions power search but should not be
+          shown as a description to users. */}
+      {document.source_type !== ValidSources.Miro && (
+        <Text as="p" className="line-clamp-2 text-left" secondaryBody text03>
+          {buildDocumentSummaryDisplay(document.match_highlights, document.blurb)}
+        </Text>
+      )}
     </div>
   );
 }

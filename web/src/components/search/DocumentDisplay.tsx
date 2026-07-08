@@ -172,7 +172,9 @@ export function CompactDocumentCard({
           />
         )}
 
-        {document.blurb && (
+        {/* FORK: miro - Gemini captions power search but should not be
+            shown as a description to users. */}
+        {document.blurb && document.source_type !== ValidSources.Miro && (
           <Text
             as="p"
             text03
