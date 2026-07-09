@@ -1,7 +1,6 @@
 "use client";
 
 import { useSettings } from "@/lib/settings/hooks";
-import Text from "@/refresh-components/texts/Text";
 
 interface SignupIntroProps {
   cloud: boolean;
@@ -11,13 +10,11 @@ export default function SignupIntro({ cloud }: SignupIntroProps) {
   const { appName } = useSettings();
 
   return (
-    <div className="w-full">
-      <Text as="p" headingH2 text05>
+    <div className="auth-card-intro">
+      <h2 className="auth-card-title">
         {cloud ? "Complete your sign up" : "Create account"}
-      </Text>
-      <Text as="p" text03>
-        Get started with {appName}
-      </Text>
+      </h2>
+      <p className="auth-card-subtext">{`Get started with ${appName}`}</p>
     </div>
   );
 }

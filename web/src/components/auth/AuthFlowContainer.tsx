@@ -1,15 +1,47 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Image from "next/image";
-import Logo from "@/refresh-components/Logo";
 import { Text } from "@opal/components";
 import { markdown } from "@opal/utils";
 import { useSettings } from "@/lib/settings/hooks";
 
+const CSS_COINS = [
+  "auth-css-coin--1",
+  "auth-css-coin--2",
+  "auth-css-coin--3",
+  "auth-css-coin--4",
+  "auth-css-coin--5",
+  "auth-css-coin--6",
+] as const;
+
 interface AuthFlowContainerProps {
-  children: React.ReactNode;
+  children: ReactNode;
   authState?: "signup" | "login" | "join";
-  footerContent?: React.ReactNode;
+  footerContent?: ReactNode | string;
+}
+
+function renderLoginFooter(
+  footerContent: ReactNode | string | undefined,
+  appName: string,
+): ReactNode {
+  if (typeof footerContent === "string") {
+    return (
+      <Text as="p" font="secondary-body">
+        {markdown(footerContent)}
+      </Text>
+    );
+  }
+
+  if (footerContent) {
+    return footerContent;
+  }
+
+  return (
+    <Text as="p" font="secondary-body">
+      {markdown(`New to ${appName}? [Create an Account](/auth/signup)`)}
+    </Text>
+  );
 }
 
 export default function AuthFlowContainer({
@@ -20,54 +52,56 @@ export default function AuthFlowContainer({
   const { appName } = useSettings();
 
   return (
-    <div className="flex min-h-screen w-full bg-background">
-      <div className="flex w-full flex-col items-center justify-center px-6 py-16 sm:px-10 lg:w-1/2 lg:px-20">
-        <div className="flex w-full max-w-md flex-col items-start">
-          <Logo folded size={40} className="text-theme-primary-05" />
-          <div className="mt-8 w-full">{children}</div>
+    <div className="auth-page">
+      <div aria-hidden="true">
+        {CSS_COINS.map((coinClass) => (
+          <div key={coinClass} className={`auth-css-coin ${coinClass}`}>
+            <div className="auth-css-coin__face" />
+          </div>
+        ))}
+      </div>
+
+      <div className="auth-page-content">
+        <Image
+          src="/logo.svg"
+          alt="SuperPlay"
+          width={200}
+          height={103}
+          priority
+          className="auth-logo"
+        />
+
+        <h1 className="auth-headline">It&apos;s only fun if you&apos;re winning</h1>
+
+        <div className="auth-card">
+          {children}
 
           {authState === "login" && (
-            <div className="mt-8 w-full text-center">
-              {footerContent ? (
-                <p className="font-main-ui-body text-text-03">
-                  {footerContent}
-                </p>
-              ) : (
-                <Text as="p" font="main-ui-body" color="text-03">
-                  {markdown(
-                    `New to ${appName}? [Create an Account](/auth/signup)`
-                  )}
-                </Text>
-              )}
+            <div className="auth-card-footer">
+              {renderLoginFooter(footerContent, appName)}
             </div>
           )}
 
           {authState === "signup" && (
-            <div className="mt-8 w-full text-center">
-              <Text as="p" font="main-ui-body" color="text-03">
+            <div className="auth-card-footer">
+              <Text as="p" font="secondary-body">
                 {markdown(
-                  "Already have an account? [Sign In](/auth/login?autoRedirectToSignup=false)"
+                  "Already have an account? [Sign In](/auth/login?autoRedirectToSignup=false)",
                 )}
               </Text>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Illustrated warm panel — hidden on mobile/tablet per the responsive
-          design pass; only the form matters below the `lg` breakpoint. */}
-      <div
-        aria-hidden="true"
-        className="relative hidden w-1/2 shrink-0 items-center justify-center border-l border-border-01 bg-background-tint-02 lg:flex"
-      >
-        <Image
-          src="/peon_hello.png"
-          alt=""
-          width={520}
-          height={520}
-          priority
-          className="h-auto w-full max-w-sm object-contain px-12"
-        />
+        <div className="auth-mascot">
+          <Image
+            src="/peon_hello.png"
+            alt=""
+            width={220}
+            height={220}
+            priority
+          />
+        </div>
       </div>
     </div>
   );

@@ -12,7 +12,7 @@ import Logo from "@/refresh-components/Logo";
 export function renderAppLogo(folded: boolean | undefined): React.ReactNode {
   return (
     <div className="px-1">
-      <Logo folded={folded} size={28} />
+      <Logo folded={folded} size={28} mark="wordmark" />
     </div>
   );
 }

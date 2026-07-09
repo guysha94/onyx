@@ -1,19 +1,12 @@
 "use client";
 
-import React from "react";
-import { useSettings } from "@/lib/settings/hooks";
-import Text from "@/refresh-components/texts/Text";
-
 export default function LoginText() {
-  const { appName } = useSettings();
   return (
-    <div className="w-full flex flex-col gap-1">
-      <Text as="p" headingH2 text05>
-        Welcome to {appName}
-      </Text>
-      <Text as="p" text03 mainUiMuted>
-        Your AI platform for work
-      </Text>
+    <div className="auth-card-intro">
+      <h2 className="auth-card-title">Welcome back</h2>
+      <p className="auth-card-subtext">
+        Sign in with your company Google account to access the employee portal.
+      </p>
     </div>
   );
 }

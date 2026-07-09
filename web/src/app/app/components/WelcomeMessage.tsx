@@ -6,7 +6,8 @@ import {
   GREETING_MESSAGES,
 } from "@/lib/chat/greetingMessages";
 import AgentAvatar from "@/refresh-components/avatars/AgentAvatar";
-import Text from "@/refresh-components/texts/Text";
+// import Text from "@/refresh-components/texts/Text";
+import { Text } from "@opal/components";
 import { MinimalAgent } from "@/lib/agents/types";
 import { useState, useEffect } from "react";
 import { useSettings } from "@/lib/settings/hooks";
@@ -47,7 +48,7 @@ export default function WelcomeMessage({
         width="fit"
       >
         <Logo folded size={32} />
-        <Text as="p" headingH2>
+        <Text as="p" font="heading-h2">
           {greeting}
         </Text>
       </Section>
@@ -62,7 +63,7 @@ export default function WelcomeMessage({
         width="fit"
       >
         <AgentAvatar agent={agent} size={36} />
-        <Text as="p" headingH2>
+        <Text as="p" font="heading-h2">
           {agent.name}
         </Text>
       </Section>

@@ -5,6 +5,7 @@
    to opal's defaults if wrapped in layer(base) or moved after the layered
    imports below. See web/src/app/css/theme-superplay.css for details. */
 @import "./css/theme-superplay.css";
+@import "./css/auth-superplay.css";
 @import "./css/attachment-button.css" layer(base);
 @import "./css/button.css" layer(base);
 @import "./css/content-editable.css" layer(base);

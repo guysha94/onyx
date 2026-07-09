@@ -8,52 +8,12 @@ import {
 import { cn } from "@opal/utils";
 import Text from "@/refresh-components/texts/Text";
 import Truncated from "@/refresh-components/texts/Truncated";
-
-const FAVICON_SRC = "/favicon.svg";
-const LOGO_SRC = "/logo.svg";
-// Matches `web/public/logo.svg` viewBox aspect ratio (935.52 × 482.32).
-const LOGO_ASPECT_RATIO = 935.52 / 482.32;
-
-export type LogoMark = "icon" | "wordmark";
-
-interface BrandMarkProps {
-  size: number;
-  className?: string;
-  mark?: LogoMark;
-}
-
-function BrandMark({ size, className, mark = "icon" }: BrandMarkProps) {
-  if (mark === "wordmark") {
-    return (
-      // biome-ignore lint/performance/noImgElement: SuperPlay wordmark is a static public SVG asset
-      <img
-        src={LOGO_SRC}
-        alt="SuperPlay"
-        height={size}
-        width={size * LOGO_ASPECT_RATIO}
-        className={cn("block h-auto w-auto shrink-0", className)}
-      />
-    );
-  }
-
-  return (
-    // biome-ignore lint/performance/noImgElement: SuperPlay icon is a static public SVG asset
-    <img
-      src={FAVICON_SRC}
-      alt="SuperPlay"
-      width={size}
-      height={size}
-      className={cn("block shrink-0 object-contain", className)}
-    />
-  );
-}
+import { SvgOnyxLogo, SvgOnyxLogoTyped } from "@opal/logos";
 
 export interface LogoProps {
   folded?: boolean;
   size?: number;
   className?: string;
-  /** `icon` = favicon.svg; `wordmark` = logo.svg */
-  mark?: LogoMark;
   // Always render the real Onyx logo, ignoring enterprise white-label settings
   // (custom logo / application name). Used by Onyx-branded surfaces like Craft.
   onyxBranded?: boolean;
@@ -64,7 +24,6 @@ export default function Logo({
   size,
   className,
   onyxBranded,
-  mark = "icon",
 }: LogoProps) {
   const resolvedSize = size ?? DEFAULT_LOGO_SIZE_PX;
   const { enterprise, logoUrl } = useSettings();
@@ -72,12 +31,10 @@ export default function Logo({
   const applicationName = enterprise?.application_name;
 
   if (onyxBranded) {
-    return (
-      <BrandMark
-        size={resolvedSize}
-        mark={mark}
-        className={cn("shrink-0", className)}
-      />
+    return folded ? (
+      <SvgOnyxLogo size={resolvedSize} className={cn("shrink-0", className)} />
+    ) : (
+      <SvgOnyxLogoTyped size={resolvedSize} className={className} />
     );
   }
 
@@ -85,7 +42,7 @@ export default function Logo({
     <div
       className={cn(
         "aspect-square rounded-full overflow-hidden relative shrink-0",
-        className,
+        className
       )}
       style={{ height: resolvedSize }}
     >
@@ -97,11 +54,7 @@ export default function Logo({
       />
     </div>
   ) : (
-    <BrandMark
-      size={resolvedSize}
-      mark={mark}
-      className={cn("shrink-0", className)}
-    />
+    <SvgOnyxLogo size={resolvedSize} className={cn("shrink-0", className)} />
   );
 
   const renderNameAndPoweredBy = (opts: {
@@ -147,11 +100,9 @@ export default function Logo({
   // Handle "logo_and_name" or default behavior
   return applicationName ? (
     renderNameAndPoweredBy({ includeLogo: true, includeName: true })
+  ) : folded ? (
+    <SvgOnyxLogo size={resolvedSize} className={cn("shrink-0", className)} />
   ) : (
-    <BrandMark
-      size={resolvedSize}
-      mark={mark}
-      className={cn("shrink-0", className)}
-    />
+    <SvgOnyxLogoTyped size={resolvedSize} className={className} />
   );
 }

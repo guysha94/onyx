@@ -12,7 +12,7 @@ import {
   WebVitals,
 } from "@/lib/analytics/shared";
 import Script from "next/script";
-import { Geist_Mono, Inter, Newsreader } from "next/font/google";
+import { Baloo_2, Geist_Mono, Inter, Newsreader } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import StatsOverlayLoader from "@/components/dev/StatsOverlayLoader";
@@ -21,6 +21,14 @@ import AppHealthBanner from "@/sections/AppHealthBanner";
 import LicenseExpiryBanner from "@/sections/LicenseExpiryBanner";
 import ProductGatingWrapper from "@/providers/ProductGatingWrapper";
 import SWRConfigProvider from "@/providers/SWRConfigProvider";
+
+const baloo2 = Baloo_2({
+  subsets: ["latin"],
+  variable: "--font-baloo-2",
+  display: "swap",
+  weight: ["600", "700", "800"],
+  fallback: ["ui-sans-serif", "system-ui", "sans-serif"],
+});
 
 const inter = Inter({
   subsets: ["latin"],
@@ -73,7 +81,12 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <html
       lang="en"
-      className={cn(inter.variable, newsreader.variable, geistMono.variable)}
+      className={cn(
+        baloo2.variable,
+        inter.variable,
+        newsreader.variable,
+        geistMono.variable,
+      )}
       suppressHydrationWarning
     >
       <head>

@@ -1,0 +1,309 @@
+/*
+ * SuperPlay auth shell (Jira AI-72).
+ *
+ * Brand colors for full-bleed auth pages. Explicit hex is intentional —
+ * design tokens lack this saturation for the magenta gradient hero.
+ */
+
+:root {
+  --sp-auth-magenta-start: #e6157a;
+  --sp-auth-magenta-mid: #d91a8c;
+  --sp-auth-magenta-end: #b824b8;
+  --sp-auth-cream: #fffbf2;
+  --sp-auth-cream-hover: #ffe7a6;
+  --sp-auth-ink: #1a1a1a;
+  --sp-auth-muted: #6b6560;
+  --sp-auth-footer: #9a9388;
+  --sp-auth-link: #e6157a;
+  --sp-auth-coin-light: #ffe7a6;
+  --sp-auth-coin-mid: #ffc23a;
+  --sp-auth-coin-dark: #e8940f;
+  --sp-auth-coin-border: #f2a93b;
+}
+
+@keyframes auth-coin-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--auth-coin-rot, 0deg));
+  }
+
+  50% {
+    transform: translateY(-14px) rotate(var(--auth-coin-rot, 0deg));
+  }
+}
+
+@keyframes auth-coin-spin {
+  0% {
+    transform: rotateY(0deg);
+  }
+
+  100% {
+    transform: rotateY(360deg);
+  }
+}
+
+.auth-page {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+  background: linear-gradient(
+    135deg,
+    var(--sp-auth-magenta-start) 0%,
+    var(--sp-auth-magenta-mid) 55%,
+    var(--sp-auth-magenta-end) 100%
+  );
+}
+
+.auth-page-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  padding: 2.25rem 1.5rem 2.5rem;
+}
+
+.auth-logo {
+  height: auto;
+  width: auto;
+  max-width: 200px;
+  filter: drop-shadow(0 4px 24px rgba(0, 0, 0, 0.25));
+}
+
+.auth-headline {
+  margin: 1.75rem 1.5rem 0;
+  max-width: 44rem;
+  text-align: center;
+  font-family: var(--font-baloo-2), ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(1.75rem, 4.4vw, 2.75rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.06rem;
+  text-transform: uppercase;
+  color: var(--sp-auth-cream);
+}
+
+.auth-card {
+  display: flex;
+  width: 100%;
+  max-width: 25rem;
+  flex-direction: column;
+  gap: 1.375rem;
+  margin-top: 2.25rem;
+  padding: 2.25rem 2rem;
+  border-radius: 1.5rem;
+  background: var(--sp-auth-cream);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+}
+
+.auth-card-title {
+  margin: 0;
+  font-family: var(--font-baloo-2), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.625rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02rem;
+  color: var(--sp-auth-ink);
+}
+
+.auth-card-subtext {
+  margin: 0;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--sp-auth-muted);
+}
+
+.auth-card-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.auth-card-footer {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--sp-auth-footer);
+}
+
+.auth-card-footer a {
+  color: var(--sp-auth-link);
+  text-decoration: underline;
+}
+
+.auth-card-footer a:hover {
+  color: var(--sp-auth-magenta-mid);
+}
+
+.auth-google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.875rem 1.25rem;
+  border: none;
+  border-radius: 0.875rem;
+  background: var(--sp-auth-ink);
+  color: var(--sp-auth-cream);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.auth-google-btn:hover:not(:disabled) {
+  background: #333;
+  transform: translateY(-1px);
+}
+
+.auth-google-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-mascot {
+  position: relative;
+  z-index: 2;
+  width: min(220px, 45vw);
+  aspect-ratio: 1;
+  margin-top: 0.5rem;
+}
+
+.auth-mascot img {
+  height: auto;
+  width: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 40px rgba(0, 0, 0, 0.35));
+}
+
+.auth-css-coin {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  animation: auth-coin-float 5.5s ease-in-out infinite;
+}
+
+.auth-css-coin__face {
+  width: 100%;
+  height: 100%;
+  border: 2px solid var(--sp-auth-coin-border);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 28%,
+    var(--sp-auth-coin-light),
+    var(--sp-auth-coin-mid) 55%,
+    var(--sp-auth-coin-dark) 100%
+  );
+  box-shadow:
+    inset 0 -4px 6px rgba(0, 0, 0, 0.2),
+    0 6px 14px rgba(0, 0, 0, 0.25);
+  animation: auth-coin-spin 7s linear infinite;
+}
+
+.auth-css-coin--1 {
+  --auth-coin-rot: -8deg;
+  top: 4rem;
+  left: 6%;
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.auth-css-coin--2 {
+  --auth-coin-rot: 10deg;
+  top: 7.5rem;
+  right: 8%;
+  width: 2rem;
+  height: 2rem;
+  animation-delay: 0.6s;
+}
+
+.auth-css-coin--2 .auth-css-coin__face {
+  animation-direction: reverse;
+  animation-duration: 6s;
+}
+
+.auth-css-coin--3 {
+  --auth-coin-rot: -14deg;
+  bottom: 5rem;
+  left: 9%;
+  width: 2.375rem;
+  height: 2.375rem;
+  animation-duration: 6s;
+  animation-delay: 1.2s;
+}
+
+.auth-css-coin--3 .auth-css-coin__face {
+  animation-duration: 8s;
+}
+
+.auth-css-coin--4 {
+  --auth-coin-rot: 6deg;
+  right: 6%;
+  bottom: 3.5rem;
+  width: 3.125rem;
+  height: 3.125rem;
+  animation-duration: 5s;
+  animation-delay: 0.3s;
+}
+
+.auth-css-coin--4 .auth-css-coin__face {
+  animation-direction: reverse;
+  animation-duration: 7.5s;
+}
+
+.auth-css-coin--5 {
+  --auth-coin-rot: 4deg;
+  top: 40%;
+  left: 3%;
+  width: 1.625rem;
+  height: 1.625rem;
+  animation-duration: 5.2s;
+  animation-delay: 0.8s;
+}
+
+.auth-css-coin--5 .auth-css-coin__face {
+  animation-duration: 6.5s;
+}
+
+.auth-css-coin--6 {
+  --auth-coin-rot: -6deg;
+  top: 55%;
+  right: 4%;
+  width: 1.875rem;
+  height: 1.875rem;
+  animation-duration: 4.8s;
+  animation-delay: 0.2s;
+}
+
+.auth-css-coin--6 .auth-css-coin__face {
+  animation-direction: reverse;
+  animation-duration: 7.2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-css-coin {
+    animation: none;
+  }
+
+  .auth-css-coin__face {
+    animation: none;
+  }
+
+  .auth-google-btn:hover:not(:disabled) {
+    transform: none;
+  }
+}

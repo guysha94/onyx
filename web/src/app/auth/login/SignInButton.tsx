@@ -27,12 +27,11 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@opal/components";
+import { Button, Text } from "@opal/components";
 import { AuthType } from "@/lib/constants";
 import { FcGoogle } from "react-icons/fc";
-import type { IconProps } from "@opal/types";
+import type { IconFunctionComponent } from "@opal/types";
 import { useCaptcha } from "@/lib/hooks/useCaptcha";
-import Text from "@/refresh-components/texts/Text";
 
 interface SignInButtonProps {
   authorizeUrl: string;
@@ -48,11 +47,11 @@ export default function SignInButton({
   const [error, setError] = useState<string | null>(null);
 
   let button: string | undefined;
-  let icon: React.FunctionComponent<IconProps> | undefined;
+  let icon: IconFunctionComponent | undefined;
 
   if (authType === AuthType.GOOGLE_OAUTH || authType === AuthType.CLOUD) {
     button = "Continue with Google";
-    icon = FcGoogle;
+    icon = FcGoogle as IconFunctionComponent;
   } else if (authType === AuthType.OIDC) {
     button = "Continue with OIDC SSO";
   } else if (authType === AuthType.SAML) {
@@ -120,16 +119,44 @@ export default function SignInButton({
     isCaptchaEnabled &&
     (authType === AuthType.GOOGLE_OAUTH || authType === AuthType.CLOUD);
 
+  const isGoogleAuth =
+    authType === AuthType.GOOGLE_OAUTH || authType === AuthType.CLOUD;
+
+  if (isGoogleAuth) {
+    return (
+      <>
+        {intercepted ? (
+          <button
+            type="button"
+            className="auth-google-btn"
+            onClick={handleClick}
+            disabled={isVerifying}
+          >
+            <FcGoogle size={20} aria-hidden />
+            {button}
+          </button>
+        ) : (
+          <a className="auth-google-btn" href={authorizeUrl}>
+            <FcGoogle size={20} aria-hidden />
+            {button}
+          </a>
+        )}
+        {error && (
+          <div className="mt-2">
+            <Text as="p" font="main-ui-muted" color="status-error-05">
+              {error}
+            </Text>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <>
       <Button
-        prominence={
-          authType === AuthType.GOOGLE_OAUTH || authType === AuthType.CLOUD
-            ? "secondary"
-            : "primary"
-        }
         width="full"
-        icon={icon}
+        {...(icon ? { icon } : {})}
         href={intercepted ? undefined : authorizeUrl}
         onClick={intercepted ? handleClick : undefined}
         disabled={isVerifying}
@@ -137,9 +164,11 @@ export default function SignInButton({
         {button}
       </Button>
       {error && (
-        <Text as="p" mainUiMuted className="text-status-error-05 mt-2">
-          {error}
-        </Text>
+        <div className="mt-2">
+          <Text as="p" font="main-ui-muted" color="status-error-05">
+            {error}
+          </Text>
+        </div>
       )}
     </>
   );

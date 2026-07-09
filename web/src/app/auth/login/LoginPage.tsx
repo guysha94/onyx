@@ -6,8 +6,8 @@ import SignInButton from "@/app/auth/login/SignInButton";
 import EmailPasswordForm from "./EmailPasswordForm";
 import { AuthType, NEXT_PUBLIC_FORGOT_PASSWORD_ENABLED } from "@/lib/constants";
 import { useSendAuthRequiredMessage } from "@/lib/extension/utils";
-import Text from "@/refresh-components/texts/Text";
-import { Button, MessageCard } from "@opal/components";
+import { Button, MessageCard, Text } from "@opal/components";
+import { markdown } from "@opal/utils";
 
 interface LoginPageProps {
   authUrl: string | null;
@@ -63,12 +63,12 @@ export default function LoginPage({
                 authorizeUrl={authUrl}
                 authType={authTypeMetadata?.authType}
               />
-              <div className="flex flex-row items-center w-full gap-2">
-                <div className="flex-1 border-t border-text-01" />
-                <Text as="p" text03 mainUiMuted>
+              <div className="flex w-full flex-row items-center gap-2">
+                <div className="flex-1 border-t border-border-02" />
+                <Text as="p" font="main-ui-muted" color="text-03">
                   or
                 </Text>
-                <div className="flex-1 border-t border-text-01" />
+                <div className="flex-1 border-t border-border-02" />
               </div>
             </>
           )}
@@ -87,21 +87,13 @@ export default function LoginPage({
       )}
 
       {!hidePageRedirect && (
-        <Text as="p" text03 mainUiBody className="text-center mt-6">
-          Don&apos;t have an account?{" "}
-          <span
-            onClick={() => {
-              if (typeof window !== "undefined" && window.top) {
-                window.top.location.href = "/auth/signup";
-              } else {
-                window.location.href = "/auth/signup";
-              }
-            }}
-            className="text-action-link-05 font-medium cursor-pointer hover:text-action-link-06"
-          >
-            Create an account
-          </span>
-        </Text>
+        <div className="mt-6 text-center">
+          <Text as="p" font="main-ui-body" color="text-03">
+            {markdown(
+              "Don't have an account? [Create an account](/auth/signup)"
+            )}
+          </Text>
+        </div>
       )}
     </div>
   );

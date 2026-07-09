@@ -83,9 +83,9 @@ export default async function Page(props: PageProps) {
     authTypeMetadata &&
     (authTypeMetadata.authType === AuthType.GOOGLE_OAUTH ||
       authTypeMetadata.authType === AuthType.OIDC ||
-      authTypeMetadata.authType === AuthType.SAML) ? (
-      <>Need access? Reach out to your IT admin to get access.</>
-    ) : undefined;
+      authTypeMetadata.authType === AuthType.SAML)
+      ? "Need access? Reach out to your [IT admin](#) to get set up."
+      : undefined;
 
   return (
     <div className="flex flex-col ">

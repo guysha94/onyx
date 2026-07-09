@@ -66,9 +66,10 @@ const Page = async (props: {
       <>
         <div className="absolute top-10x w-full"></div>
         <div className="flex w-full flex-col justify-center">
-          <h2 className="text-center text-xl text-strong font-bold">
-            Re-authenticate to join team
-          </h2>
+          <div className="auth-card-intro">
+            <h2 className="auth-card-title">Re-authenticate to join team</h2>
+            <p className="auth-card-subtext">{`Join ${teamName} with your company account.`}</p>
+          </div>
 
           {cloud && authUrl && (
             <div className="w-full justify-center">

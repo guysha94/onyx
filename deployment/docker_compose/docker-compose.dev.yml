@@ -68,6 +68,11 @@ services:
       watch: *backend-restart-watch
 
   web_server:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "${HOST_PORT:-3000}:3000"
     develop:
       watch:
         - action: rebuild
@@ -78,6 +83,13 @@ services:
           path: ../../web/src
         - action: rebuild
           path: ../../web/lib
+
+  # Nginx is only needed when a single host port must front both web and API
+  # (production / install flows). Dev hits web_server directly; Next.js proxies
+  # /api to api_server. Opt in with COMPOSE_PROFILES=with-nginx if needed.
+  nginx:
+    profiles:
+      - with-nginx
 
   # Uncomment the block below to enable the MCP server for Onyx.
   # mcp_server:
