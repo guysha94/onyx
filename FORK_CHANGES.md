@@ -150,6 +150,10 @@ title + vision timeout — see `plans/image_title_and_caption_a81aa9f9.plan.md`)
 | `backend/onyx/connectors/cross_connector_utils/miscellaneous_utils.py` | Added `asset_filename` to `_SOURCE_METADATA_KEYS_TO_IGNORE[MIRO]` so it is a filterable exact-match tag but never embedded into the semantic/keyword suffix | `# FORK: miro` |
 | `backend/ee/onyx/search/process_search_query.py` | Broadened `_MIRO_ASSET_FILENAME_RE` from hex-only (16+ chars) to any single-token filename ending in an image extension (e.g. `image_720.png`, `Logo-Final.webp`) — routes to the exact `asset_filename` Tag lookup | `# FORK: miro` |
 | `backend/onyx/llm/factory.py` | fix the `get_default_llm_with_vision` timeout guard (`if not None` was always true / would `TypeError` on `None`) to `timeout is not None`, keeping the 180s floor | upstream file, no marker (bug fix) |
+| `web/src/ee/sections/AssetImageLightbox.tsx` | new component — Radix Dialog lightbox for Miro search-result thumbnails; shows a larger image with zoom-in/out (buttons + scroll wheel), asset title as a clickable link, close on X or click-outside | net-new file, no marker needed |
+| `web/src/ee/sections/SearchCard.tsx` | wire `AssetImageLightbox` to the thumbnail — clicking opens the lightbox (`e.stopPropagation` so the card's own click handler is unaffected); hide the `blurb`/description for Miro results (Gemini captions power search but should not be shown to users) | `// FORK: miro` |
+| `web/src/components/search/DocumentDisplay.tsx` | hide the `blurb` for Miro results (consistency with `SearchCard`) | `// FORK: miro` |
+| `web/src/sections/document-sidebar/ChatDocumentDisplay.tsx` | hide the `blurb` for Miro results in the document preview sidebar | `// FORK: miro` |
 
 > Vision model is Gemini Flash (Vertex AI) via the admin default-vision-model setting; it follows
 > the `TITLE:`/`DESCRIPTION:` prompt reliably. Re-captioning already-indexed assets requires
