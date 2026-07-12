@@ -14,6 +14,12 @@ run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml build"
 description = "Run dev with compose watch"
 run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml up -d --wait && exec docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml watch"
 
+
+[tasks."dev:gpu"]
+description = "Run dev with compose watch"
+run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml up -d --wait && exec docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml watch"
+
+
 [tasks.down]
 description = "Stop dev containers"
 run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml down"

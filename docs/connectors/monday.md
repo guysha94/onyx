@@ -9,7 +9,7 @@ can search them in Onyx and get answers that cite back to the original monday.co
 - **Column values** (status, text, people, dates, etc.) shown on each item.
 - **Updates** — the conversation/comment thread on each item.
 - **Files** — attachment names and links are indexed so items are findable by file name. File
-  *contents* are not downloaded in this version.
+  _contents_ are not downloaded in this version.
 
 Each result links straight back to the item in monday.com.
 
@@ -46,9 +46,17 @@ Workspace IDs appear in the URL when you open a workspace.
 
 ## Permissions
 
-In this version, everything the API token can access is indexed and visible to Onyx users who can
-see the connector's documents. Per-board access control mapping (mirroring monday.com board
-permissions into Onyx) is planned as a follow-up.
+When **Document Access** is set to **Auto Sync Permissions**, Onyx periodically
+syncs board-level ACL from Monday.com. A document is searchable only for users who
+can access it in Monday (board owners/subscribers, workspace members for closed
+workspaces, etc.).
+
+Requires Enterprise Edition (`ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true`) and
+Business tier for the Auto Sync option in the admin UI.
+
+In this version, everything the API token can access is indexed. Per-board access
+control mapping mirrors Monday board permissions at the item level (items inherit
+their board's ACL).
 
 ## Troubleshooting
 
