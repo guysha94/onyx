@@ -17,6 +17,7 @@ from onyx.connectors.models import DocumentSource
 from onyx.connectors.models import ImageSection
 from onyx.connectors.models import TabularSection
 from onyx.connectors.models import TextSection
+from onyx.file_processing.image_summarization import ImageTitleAndSummary
 from onyx.hooks.executor import HookSkipped
 from onyx.hooks.executor import HookSoftFailed
 from onyx.hooks.points.document_ingestion import DocumentIngestionResponse
@@ -24,6 +25,7 @@ from onyx.hooks.points.document_ingestion import DocumentIngestionSection
 from onyx.indexing.chunker import Chunker
 from onyx.indexing.embedder import DefaultIndexingEmbedder
 from onyx.indexing.indexing_pipeline import _apply_document_ingestion_hook
+from onyx.indexing.indexing_pipeline import _derive_fallback_title
 from onyx.indexing.indexing_pipeline import add_contextual_summaries
 from onyx.indexing.indexing_pipeline import filter_documents
 from onyx.indexing.indexing_pipeline import get_docs_to_update
@@ -560,6 +562,38 @@ def test_document_ingestion_hook_mixed_batch() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _derive_fallback_title
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveFallbackTitle:
+    """FORK: miro - title synthesized from a caption when the vision model
+    doesn't return a usable TITLE line (see process_image_sections)."""
+
+    def test_uses_first_sentence(self) -> None:
+        summary = "A cartoon kitchen scene. It has a fridge and a sink."
+        assert _derive_fallback_title(summary) == "A cartoon kitchen scene"
+
+    def test_uses_first_line_when_no_sentence_terminator(self) -> None:
+        summary = "A stylized fantasy castle on a hill\nwith dragons flying above"
+        assert _derive_fallback_title(summary) == "A stylized fantasy castle on a hill"
+
+    def test_truncates_to_max_words(self) -> None:
+        summary = "one two three four five six seven eight nine ten"
+        assert _derive_fallback_title(summary, max_words=8) == "one two three four five six seven eight"
+
+    def test_strips_trailing_punctuation(self) -> None:
+        assert _derive_fallback_title("A red button.") == "A red button"
+
+    def test_empty_or_blank_summary_returns_none(self) -> None:
+        assert _derive_fallback_title("") is None
+        assert _derive_fallback_title("   ") is None
+
+    def test_whitespace_only_first_chunk_returns_none(self) -> None:
+        assert _derive_fallback_title(".") is None
+
+
+# ---------------------------------------------------------------------------
 # process_image_sections
 # ---------------------------------------------------------------------------
 
@@ -590,6 +624,7 @@ def _mock_file_store(image_map: dict[str, bytes]) -> MagicMock:
 def _make_image_doc(
     doc_id: str,
     sections: list[TextSection | ImageSection],
+    derive_title_from_image: bool = False,
 ) -> Document:
     return Document(
         id=doc_id,
@@ -597,6 +632,7 @@ def _make_image_doc(
         semantic_identifier=doc_id,
         sections=sections,
         source=DocumentSource.FILE,
+        derive_title_from_image=derive_title_from_image,
         metadata={},
     )
 
@@ -621,6 +657,7 @@ class TestProcessImageSections:
         documents: list[Document],
         image_map: dict[str, bytes],
         summarize_side_effect: Any = None,
+        summarize_and_title_side_effect: Any = None,
     ) -> list[Any]:
         """Helper that patches all external deps and calls process_image_sections."""
         if summarize_side_effect is None:
@@ -629,6 +666,16 @@ class TestProcessImageSections:
                 **kwargs: Any,
             ) -> str:
                 return f"summary-of-{kwargs['context_name']}"
+
+        if summarize_and_title_side_effect is None:
+
+            def summarize_and_title_side_effect(
+                **kwargs: Any,
+            ) -> ImageTitleAndSummary:
+                return ImageTitleAndSummary(
+                    title=f"title-of-{kwargs['context_name']}",
+                    summary=f"summary-of-{kwargs['context_name']}",
+                )
 
         with (
             patch(
@@ -646,6 +693,10 @@ class TestProcessImageSections:
             patch(
                 f"{_PATCH_PREFIX}.summarize_image_with_error_handling",
                 side_effect=summarize_side_effect,
+            ),
+            patch(
+                f"{_PATCH_PREFIX}.summarize_image_and_title_with_error_handling",
+                side_effect=summarize_and_title_side_effect,
             ),
         ):
             return process_image_sections(documents)
@@ -818,6 +869,157 @@ class TestProcessImageSections:
         # allow_failures=True → None result → fallback text
         assert sections[1].text == "[Error processing image]"
         assert sections[2].text == "summary-of-ok2"
+
+    def test_derive_title_from_image_updates_document_title(self) -> None:
+        """When a doc opts into derive_title_from_image, the LLM-generated title
+        replaces the document title/semantic_identifier, and the description
+        becomes the image section text."""
+        doc = _make_image_doc(
+            "doc1",
+            [ImageSection(image_file_id="img-A")],
+            derive_title_from_image=True,
+        )
+        result = self._run([doc], image_map={"img-A": b"aa"})
+
+        indexing_doc = result[0]
+        assert indexing_doc.title == "title-of-img-A"
+        assert indexing_doc.semantic_identifier == "title-of-img-A"
+        assert indexing_doc.processed_sections[0].text == "summary-of-img-A"
+
+    def test_derive_title_falls_back_to_description_derived_title(self) -> None:
+        """If the vision model returns no TITLE line but does produce a real
+        description, a short title is synthesized from the description
+        rather than leaving the (often generic) connector-supplied fallback
+        title in place - see _derive_fallback_title."""
+        doc = _make_image_doc(
+            "doc1",
+            [ImageSection(image_file_id="img-A")],
+            derive_title_from_image=True,
+        )
+
+        def _no_title(**kwargs: Any) -> ImageTitleAndSummary:
+            return ImageTitleAndSummary(
+                title=None, summary="A cartoon kitchen scene. Extra detail."
+            )
+
+        result = self._run(
+            [doc],
+            image_map={"img-A": b"aa"},
+            summarize_and_title_side_effect=_no_title,
+        )
+
+        indexing_doc = result[0]
+        assert indexing_doc.title == "A cartoon kitchen scene"
+        assert indexing_doc.semantic_identifier == "A cartoon kitchen scene"
+        assert (
+            indexing_doc.processed_sections[0].text
+            == "A cartoon kitchen scene. Extra detail."
+        )
+
+    def test_derive_title_keeps_connector_fallback_when_captioning_fails(self) -> None:
+        """When captioning fails entirely (placeholder summary, no title), no
+        title is derived from the placeholder text - the connector-supplied
+        fallback title is left untouched."""
+        doc = _make_image_doc(
+            "doc1",
+            [ImageSection(image_file_id="img-A")],
+            derive_title_from_image=True,
+        )
+
+        result = self._run(
+            [doc],
+            image_map={"img-A": b"aa"},
+            summarize_and_title_side_effect=lambda **kwargs: None,
+        )
+
+        indexing_doc = result[0]
+        assert indexing_doc.title == "Doc doc1"
+        assert indexing_doc.semantic_identifier == "doc1"
+        assert (
+            indexing_doc.processed_sections[0].text
+            == "[Image could not be summarized]"
+        )
+
+    def test_derive_title_disabled_uses_plain_summarizer(self) -> None:
+        """Without opt-in, the title is untouched and the plain summarizer is used."""
+        doc = _make_image_doc(
+            "doc1",
+            [ImageSection(image_file_id="img-A")],
+        )
+        result = self._run([doc], image_map={"img-A": b"aa"})
+
+        indexing_doc = result[0]
+        assert indexing_doc.title == "Doc doc1"
+        assert indexing_doc.semantic_identifier == "doc1"
+        assert indexing_doc.processed_sections[0].text == "summary-of-img-A"
+
+    # FORK: miro - the section heading (board/frame/nearby-label context set by
+    # the Miro connector) must always end up folded into the final section
+    # text, regardless of which code path produces that text.
+
+    def test_heading_folded_into_text_on_successful_caption(self) -> None:
+        doc = _make_image_doc(
+            "doc1", [ImageSection(image_file_id="img-A", heading="Board: X\nFrame: Y")]
+        )
+        result = self._run([doc], image_map={"img-A": b"aa"})
+
+        text = result[0].processed_sections[0].text
+        assert text == "summary-of-img-A\n\nBoard: X\nFrame: Y"
+
+    def test_heading_folded_into_text_on_missing_file(self) -> None:
+        doc = _make_image_doc(
+            "doc1", [ImageSection(image_file_id="missing", heading="Board: X")]
+        )
+        result = self._run([doc], image_map={})
+
+        text = result[0].processed_sections[0].text
+        assert text == "[Image could not be processed]\n\nBoard: X"
+
+    def test_heading_folded_into_text_on_read_error(self) -> None:
+        doc = _make_image_doc(
+            "doc1", [ImageSection(image_file_id="img-A", heading="Board: X")]
+        )
+        store = MagicMock()
+        store.read_file_record.return_value = MagicMock(display_name="img-A")
+        store.read_file.side_effect = RuntimeError("boom")
+        with (
+            patch(
+                f"{_PATCH_PREFIX}.get_image_extraction_and_analysis_enabled",
+                return_value=True,
+            ),
+            patch(
+                f"{_PATCH_PREFIX}.get_default_llm_with_vision",
+                return_value=MagicMock(),
+            ),
+            patch(f"{_PATCH_PREFIX}.get_default_file_store", return_value=store),
+        ):
+            result = process_image_sections([doc])
+
+        text = result[0].processed_sections[0].text
+        assert text == "[Error processing image]\n\nBoard: X"
+
+    def test_heading_folded_into_text_without_vision_llm(self) -> None:
+        """No LLM configured/enabled: the image section text is empty except
+        for the folded-in connector context."""
+        doc = _make_image_doc(
+            "doc1", [ImageSection(image_file_id="img-A", heading="Board: X\nFrame: Y")]
+        )
+        with patch(
+            f"{_PATCH_PREFIX}.get_image_extraction_and_analysis_enabled",
+            return_value=False,
+        ):
+            result = process_image_sections([doc])
+
+        text = result[0].processed_sections[0].text
+        assert text == "Board: X\nFrame: Y"
+
+    def test_no_heading_leaves_text_unaffected(self) -> None:
+        """Sections without a heading (i.e. every connector besides Miro) are
+        completely unaffected by the heading-folding logic."""
+        doc = _make_image_doc("doc1", [ImageSection(image_file_id="img-A")])
+        result = self._run([doc], image_map={"img-A": b"aa"})
+
+        assert result[0].processed_sections[0].text == "summary-of-img-A"
 
 
 # ---------------------------------------------------------------------------

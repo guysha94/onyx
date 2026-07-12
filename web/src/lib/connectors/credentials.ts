@@ -159,6 +159,11 @@ export interface MondayCredentialJson {
   monday_api_token: string;
 }
 
+// FORK: miro
+export interface MiroCredentialJson {
+  miro_access_token: string;
+}
+
 export interface HubSpotCredentialJson {
   hubspot_access_token: string;
 }
@@ -333,6 +338,8 @@ export const credentialTemplates: Record<ValidSources, any> = {
   linear: { linear_access_token: "" } as LinearCredentialJson,
   // FORK: monday
   monday: { monday_api_token: "" } as MondayCredentialJson,
+  // FORK: miro
+  miro: { miro_access_token: "" } as MiroCredentialJson,
   hubspot: { hubspot_access_token: "" } as HubSpotCredentialJson,
   document360: {
     portal_id: "",
@@ -578,6 +585,9 @@ export const credentialDisplayNames: Record<string, string> = {
 
   // FORK: monday
   monday_api_token: "Monday.com API Token",
+
+  // FORK: miro
+  miro_access_token: "Miro Access Token",
 
   // HubSpot
   hubspot_access_token: "HubSpot Access Token",

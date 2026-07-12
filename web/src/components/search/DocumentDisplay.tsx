@@ -9,6 +9,8 @@ import { openDocument } from "@/lib/search/utils";
 import { SubQuestionDetail } from "@/app/app/interfaces";
 import { ValidSources } from "@/lib/types";
 import { Card } from "@/components/ui/card";
+// FORK: miro
+import { buildImgUrl } from "@/app/app/components/files/images/utils";
 
 export const buildDocumentSummaryDisplay = (
   matchHighlights: string[],
@@ -156,7 +158,23 @@ export function CompactDocumentCard({
           </Text>
         </div>
 
-        {document.blurb && (
+        {/* Thumbnail (e.g. Miro image assets) - FORK: miro. Falls back to
+            file_id when a text chunk (no image_file_id) is the top hit for
+            an image doc. */}
+        {(document.image_file_id ?? document.file_id) && (
+          <img
+            src={buildImgUrl(
+              (document.image_file_id ?? document.file_id) as string
+            )}
+            alt={document.semantic_identifier ?? document.document_id}
+            loading="lazy"
+            className="w-full max-h-32 object-cover rounded-8 border border-border-01"
+          />
+        )}
+
+        {/* FORK: miro - Gemini captions power search but should not be
+            shown as a description to users. */}
+        {document.blurb && document.source_type !== ValidSources.Miro && (
           <Text
             as="p"
             text03
@@ -167,7 +185,11 @@ export function CompactDocumentCard({
           </Text>
         )}
 
-        {document.updated_at &&
+        {/* FORK: miro - Miro's modifiedAt is a bulk-import timestamp shared
+            across many assets, not a meaningful per-asset update time, so
+            it's hidden here. */}
+        {document.source_type !== ValidSources.Miro &&
+          document.updated_at &&
           !isNaN(new Date(document.updated_at).getTime()) && (
             <Text
               as="p"

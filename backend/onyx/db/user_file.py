@@ -115,6 +115,16 @@ def get_file_id_by_user_file_id(user_file_id: str, db_session: Session) -> str |
     caller is already passing a storage `file_id`), so the caller can fall
     through to a direct file-store lookup.
     """
+    # FORK: miro - UserFile.id is UUID-typed, but callers (e.g. GET
+    # /chat/file/{file_id}) may pass non-UserFile ids (connector file_ids
+    # like "miro__<board>__<item>"), which raise psycopg2
+    # InvalidTextRepresentation if used directly in the UUID comparison
+    # below. Reject those before querying so they fall through instead.
+    try:
+        UUID(user_file_id)
+    except ValueError:
+        return None
+
     user_file = db_session.query(UserFile).filter(UserFile.id == user_file_id).first()
     if user_file:
         return user_file.file_id

@@ -22,4 +22,4 @@ run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DE
 
 [tasks.down]
 description = "Stop dev containers"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml down"
+run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml down"

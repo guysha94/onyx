@@ -22,4 +22,5 @@ export const autoSyncConfigBySource: Record<
   sharepoint: {},
   teams: {},
   monday: {}, // FORK: monday
+  miro: {}, // FORK: miro
 };

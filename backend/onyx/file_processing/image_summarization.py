@@ -1,7 +1,9 @@
 import base64
+import re
 from io import BytesIO
 
 from PIL import Image
+from pydantic import BaseModel
 
 from onyx.configs.app_configs import IMAGE_SUMMARIZATION_SYSTEM_PROMPT
 from onyx.configs.app_configs import IMAGE_SUMMARIZATION_USER_PROMPT
@@ -14,6 +16,8 @@ from onyx.llm.models import SystemMessage
 from onyx.llm.models import TextContentPart
 from onyx.llm.models import UserMessage
 from onyx.llm.utils import llm_response_to_string
+from onyx.prompts.image_analysis import DEFAULT_ASSET_CAPTION_SYSTEM_PROMPT
+from onyx.prompts.image_analysis import DEFAULT_ASSET_CAPTION_USER_PROMPT
 from onyx.server.metrics.image_processing import track_image_summarization
 from onyx.tracing.flows import LLMFlow
 from onyx.tracing.llm_utils import llm_generation_span
@@ -100,6 +104,88 @@ def summarize_image_with_error_handling(
             len(image_data),
         )
         return None
+
+
+# FORK: miro
+class ImageTitleAndSummary(BaseModel):
+    """Structured caption for a visual asset: a short human-readable title plus a
+    rich, retrieval-optimized description."""
+
+    title: str | None
+    summary: str
+
+
+# FORK: miro
+_TITLE_LINE_RE = re.compile(r"^\s*title\s*[:\-]\s*(.*)$", re.IGNORECASE)
+_DESCRIPTION_LINE_RE = re.compile(r"^\s*description\s*[:\-]\s*(.*)$", re.IGNORECASE)
+
+
+def _parse_title_and_summary(raw: str) -> ImageTitleAndSummary:
+    """Parse the ``TITLE: ...\\nDESCRIPTION: ...`` format from the asset-caption
+    prompt. Robust to small models that don't follow the format exactly: if no
+    TITLE line is found, the whole response becomes the summary with title=None.
+    """
+    title: str | None = None
+    description_lines: list[str] = []
+    in_description = False
+
+    for line in raw.splitlines():
+        if not in_description:
+            title_match = _TITLE_LINE_RE.match(line)
+            if title_match:
+                title = title_match.group(1).strip() or None
+                continue
+            description_match = _DESCRIPTION_LINE_RE.match(line)
+            if description_match:
+                in_description = True
+                remainder = description_match.group(1).strip()
+                if remainder:
+                    description_lines.append(remainder)
+                continue
+        description_lines.append(line)
+
+    description = "\n".join(description_lines).strip()
+    # If parsing produced nothing usable, fall back to the raw text as summary.
+    if not description:
+        description = raw.strip()
+        title = None
+
+    return ImageTitleAndSummary(title=title, summary=description)
+
+
+# FORK: miro
+def summarize_image_and_title_with_error_handling(
+    llm: LLM | None,
+    image_data: bytes,
+    context_name: str,
+    system_prompt: str = DEFAULT_ASSET_CAPTION_SYSTEM_PROMPT,
+    user_prompt_template: str = DEFAULT_ASSET_CAPTION_USER_PROMPT,
+) -> ImageTitleAndSummary | None:
+    """Like ``summarize_image_with_error_handling`` but asks the vision model for a
+    short title in addition to the description, and returns both. Used by
+    image-asset connectors (e.g. Miro) so the indexed title is meaningful rather
+    than a raw filename. Returns ``None`` on failure or when disabled.
+    """
+    if llm is None:
+        return None
+
+    user_prompt = (
+        f"The image has the file name '{context_name}'.\n{user_prompt_template}"
+    )
+    try:
+        raw = summarize_image_pipeline(llm, image_data, user_prompt, system_prompt)
+    except UnsupportedImageFormatError:
+        magic_hex = image_data[:8].hex() if image_data else "empty"
+        logger.info(
+            "Skipping image summarization due to unsupported MIME type "
+            "for %s (magic_bytes=%s, size=%d bytes)",
+            context_name,
+            magic_hex,
+            len(image_data),
+        )
+        return None
+
+    return _parse_title_and_summary(raw)
 
 
 def _summarize_image(

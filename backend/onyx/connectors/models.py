@@ -233,6 +233,12 @@ class DocumentBase(BaseModel):
     # of the search, at least not in the same way as a document title should be for like Confluence
     # The default title is semantic_identifier though unless otherwise specified
     title: str | None = None
+    # FORK: miro
+    # When True, the indexing pipeline may replace the title/semantic_identifier
+    # with one derived from the image caption. Used by image-asset connectors
+    # (e.g. Miro) where the raw filename ("image.png") is not a meaningful title.
+    # The connector-supplied title remains the deterministic fallback.
+    derive_title_from_image: bool = False
     from_ingestion_api: bool = False
     # Anything else that may be useful that is specific to this particular connector type that other
     # parts of the code may need. If you're unsure, this can be left as None

@@ -399,13 +399,21 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Full SSO integration (Google Workspace OAuth, SAML, or OIDC) is required for the SuperPlay deployment, not optional.
 - Prefer Google OAuth over email/password for self-hosted authentication (`AUTH_TYPE=google_oauth`).
 - UI rebrand target is Claude-style conversational UX with SuperPlay branding (superplay.co palette, icons, typography).
+- When fixing Docker build issues for web workspace packages, put fixes in the Dockerfile rather than changing `package.json` scripts (scripts must stay compatible with upstream/main for merging).
+- Miro/image assets must have meaningful per-asset titles (never placeholder filenames like `4.png`/`image.png`) and clear, highly informative vision captions (subject, style, colours, layout — who/what/where/when/how); store the image summary in `doc_summary` and vector it into both the title and content vectors.
 
 ## Learned Workspace Facts
 
 - SuperPlay homelab fork of Onyx for an internal enterprise AI search platform; parent initiative is Jira AI-61.
 - Docker Compose deployment config lives at `deployment/docker_compose/.env`; env vars apply at container creation — run `docker compose up -d --force-recreate api_server web_server` after changes.
+- `mise dev` is the command used to start the full Docker Compose Onyx stack locally.
 - Primary Atlassian/Jira instance is `superplaystudio.atlassian.net`.
-- Custom connector priorities include Monday.com, Miro, and Mixpanel; Monday.com connector work tracks Jira AI-69 and follows the Linear connector pattern.
+- Custom connector priorities include Monday.com, Miro, and Mixpanel; Monday.com connector work tracks Jira AI-69 and follows the Linear connector pattern. The Miro connector (branch `feat/AI-70-miro-connector`, Jira AI-70) indexes visual asset boards (images, screenshots, UI mockups, icons — no videos) for game production, targeting multimodal + spatial semantic search; Miro doc IDs use the format `miro__boardId__itemId`.
+- Custom source forks (e.g. Monday, Miro) are added via the fork pattern: register only in `backend/onyx/connectors/fork_registry.py` (never edit the body of `backend/onyx/connectors/registry.py`), tag any edits to shared/core files with `# FORK: <name>`, log changes in `FORK_CHANGES.md`, and use simple static API-token auth with `LoadConnector`/`PollConnector` rather than full OAuth for MVP scope.
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
-- Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch).
+- Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch at `https://localhost:9200`, self-signed cert + basic-auth admin; active chunk index `danswer_chunk_nomic_ai_nomic_embed_text_v1`, nomic-embed-text-v1 embeddings).
+- Two LLM providers are configured: `ollama` and `gemini`/Vertex AI; `gemini-2.5-flash` is the active default vision model for Miro image captioning. `llava:7b` times out (180 s) and produces poor captions; `gemma4:e2b-mlx` crashes the Ollama llama-server when images are passed (upstream Ollama bug) — avoid both for vision tasks.
+- Web Docker builds for workspace packages (`lib/shared`, `lib/opal`) use `bun install --frozen-lockfile --ignore-scripts` followed by explicit `bun run build` per package, to avoid `node` failing to resolve devDependencies (e.g. `style-dictionary`) during lifecycle scripts.
+- Miro connector open search issues are tracked in `plans/miro_search_fixes_a18f5ad6.plan.md`: broken thumbnails (UUID DataError in `fetch_chat_file` when querying `UserFile.id` with a non-UUID Miro file ID), exact-match fast path for asset-ID/filename queries, hiding timestamps on Miro results, and distinguishable asset titles (store `asset_filename` + `miro_item_id` in document metadata). User-typed titles (text field directly below an image in Miro UI) are read from `item.data.title` as `asset_title`, stored in metadata, used as `semantic_identifier`, and are searchable by exact name — this is the recommended way for users to make their Miro images findable by name.
+- The `Document.content_hash` deliberately excludes LLM-generated summaries; re-running the indexer after changing only the prompt or vision model will skip already-indexed docs. To force re-captioning: clear content hashes for the connector's docs in PostgreSQL, then trigger a re-index via the admin UI.

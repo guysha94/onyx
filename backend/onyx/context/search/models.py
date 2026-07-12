@@ -275,6 +275,11 @@ class SearchDoc(BaseModel):
     # run through `populate_file_ids_on_sections`.
     file_id: str | None = None
 
+    # Mirrors `InferenceChunk.image_file_id`. Lets result cards render a
+    # thumbnail for image chunks (e.g. Miro assets) via
+    # `GET /api/chat/file/{image_file_id}`. FORK: miro
+    image_file_id: str | None = None
+
     @classmethod
     def from_chunks_or_sections(
         cls,
@@ -308,6 +313,7 @@ class SearchDoc(BaseModel):
                 secondary_owners=chunk.secondary_owners,
                 is_internet=False,
                 file_id=chunk.file_id,
+                image_file_id=chunk.image_file_id,  # FORK: miro
             )
             for item in items
         ]

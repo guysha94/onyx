@@ -272,6 +272,7 @@ class DocumentSource(str, Enum):
     # Uses RAW_BINARY processing mode - no text extraction
     CRAFT_FILE = "craft_file"
     MONDAY = "monday"  # FORK: monday
+    MIRO = "miro"  # FORK: miro
 
 
 class FederatedConnectorSource(str, Enum):
@@ -751,4 +752,5 @@ DocumentSourceDescription: dict[DocumentSource, str] = {
     DocumentSource.TESTRAIL: "Test cases and QA management",
     DocumentSource.BRAINTRUST: "LLM eval experiments, datasets, and prompts",
     DocumentSource.MONDAY: "Project management boards, items, and updates",  # FORK: monday
+    DocumentSource.MIRO: "Visual asset boards, images, and frames",  # FORK: miro
 }
