@@ -35,6 +35,15 @@ Your caption will be embedded and used to find the image later, so be precise,
 concrete, and specific - avoid generic or vague phrasing. Cover, when visible:
 - Subject: what the image depicts (objects, characters, UI elements, symbols) -
   name specific things rather than describing them abstractly.
+- Characters: any characters or creatures shown, named as specifically as possible
+  (e.g. peons, mascots, humans, or recognizable/licensed characters).
+- Animals: any animals present and their species or type.
+- Theme: theme elements or motifs that signal the image's theme (e.g. holiday,
+  fantasy, sci-fi, medieval), including flags, banners, or emblems that indicate it.
+- Season & setting: any season or weather depicted (e.g. summer, winter, autumn,
+  rain, snow) and the overall environment or setting.
+- Feature type: the kind of asset or game feature it represents (e.g. building,
+  icon, background, reward, character portrait, UI screen).
 - Text: any words, labels, numbers, or logos rendered in the image (transcribe
   them exactly, verbatim).
 - Style: the art/visual style (e.g. flat vector, 3D render, pixel art, photographic,

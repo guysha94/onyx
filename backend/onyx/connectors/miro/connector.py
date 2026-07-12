@@ -624,10 +624,3 @@ class MiroConnector(LoadConnector, PollConnector):
         start_time = datetime.fromtimestamp(start, tz=timezone.utc)
         end_time = datetime.fromtimestamp(end, tz=timezone.utc)
         yield from self._process_boards(start=start_time, end=end_time)
-
-
-if __name__ == "__main__":
-    connector = MiroConnector()
-    connector.load_credentials({"miro_access_token": os.environ["MIRO_ACCESS_TOKEN"]})
-    connector.validate_connector_settings()
-    print(next(connector.load_from_state()))
