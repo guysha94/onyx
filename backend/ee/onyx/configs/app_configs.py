@@ -57,6 +57,20 @@ MONDAY_PERMISSION_DOC_SYNC_FREQUENCY = int(
 
 
 #####
+# MIRO (FORK: miro)
+#####
+
+# In seconds, default is 30 minutes
+MIRO_PERMISSION_DOC_SYNC_FREQUENCY = int(
+    os.environ.get("MIRO_PERMISSION_DOC_SYNC_FREQUENCY") or 30 * 60
+)
+# In seconds, default is 30 minutes
+MIRO_PERMISSION_GROUP_SYNC_FREQUENCY = int(
+    os.environ.get("MIRO_PERMISSION_GROUP_SYNC_FREQUENCY") or 30 * 60
+)
+
+
+#####
 # Google Drive
 #####
 GOOGLE_DRIVE_PERMISSION_GROUP_SYNC_FREQUENCY = int(

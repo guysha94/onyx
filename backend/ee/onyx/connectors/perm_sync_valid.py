@@ -1,6 +1,7 @@
 from onyx.connectors.confluence.connector import ConfluenceConnector
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
 from onyx.connectors.interfaces import BaseConnector
+from onyx.connectors.miro.connector import MiroConnector  # FORK: miro
 from onyx.connectors.monday.connector import MondayConnector
 from onyx.connectors.sharepoint.connector import SharepointConnector
 
@@ -35,6 +36,16 @@ def validate_monday_perm_sync(connector: MondayConnector) -> None:
     connector.validate_perm_sync()
 
 
+def validate_miro_perm_sync(connector: MiroConnector) -> None:  # FORK: miro
+    """Validate that the token is organization-scoped for permission syncing.
+
+    Team-based ACLs require reading org membership/emails via the org API.
+    Probe it here so a non-org token fails fast at connector creation (with an
+    actionable InsufficientPermissionsError) instead of mid-sync.
+    """
+    connector.probe_org_member_access()
+
+
 def validate_sharepoint_perm_sync(connector: SharepointConnector) -> None:
     """
     Validate that the connector is configured correctly for permissions syncing.
@@ -66,3 +77,5 @@ def validate_perm_sync(connector: BaseConnector) -> None:
         validate_sharepoint_perm_sync(connector)
     elif isinstance(connector, MondayConnector):
         validate_monday_perm_sync(connector)
+    elif isinstance(connector, MiroConnector):  # FORK: miro
+        validate_miro_perm_sync(connector)

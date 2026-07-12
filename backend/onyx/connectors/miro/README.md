@@ -85,10 +85,32 @@ Sent as `Authorization: Bearer <token>` on every Miro REST API call.
 Only `id`, `type`, `data`, `parent`, and `modifiedAt` are used from each item.
 `position`/`geometry` (coordinates, bounding box) are intentionally unused.
 
+## Auto Sync Permissions (EE)
+
+The connector supports "Auto Sync Permissions" (`access_type = "sync"`) via a
+team-based external-group model:
+
+- `retrieve_all_slim_docs_perm_sync` tags each asset with its board's
+  `ExternalAccess` derived from the board `sharingPolicy`:
+  - org-wide / public-link access -> public,
+  - team access -> the board's team external group (`miro_team_<team_id>`),
+  - private-to-individuals -> admin-only (fail closed).
+- `ee/onyx/external_permissions/miro/group_sync.py` resolves each Miro team to
+  its member emails (`GET /v2/orgs/{org_id}/teams` + `/members`, joined against
+  `GET /v2/orgs/{org_id}/members` for emails) and yields one
+  `ExternalUserGroup` per team.
+
+**Requires an organization-scoped access token** (scopes incl.
+`organizations:read`, `organizations:teams:read`). Indexing itself works with a
+board-only token, but enabling perm sync validates org-member access up front
+and fails fast otherwise. Board-member-level (per-individual) shares are not
+resolvable to emails (different id space with no email endpoint), so such
+boards fall back to their team group or admin-only.
+
 ## Out of scope (future work)
 
 - Full OAuth 2.0 authorization-code flow.
-- EE per-board permission/group sync.
+- Per-individual board-member ACLs (only team-level access is resolved to emails).
 - Checkpointed indexing for very large board sets.
 - Generalizing the thumbnail auth trick to embedded/attachment-style images
   where `image_file_id != Document.file_id`.

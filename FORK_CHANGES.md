@@ -159,3 +159,25 @@ title + vision timeout — see `plans/image_title_and_caption_a81aa9f9.plan.md`)
 > the `TITLE:`/`DESCRIPTION:` prompt reliably. Re-captioning already-indexed assets requires
 > clearing them first (delete + re-add the connector), because `get_docs_to_update`'s content-hash
 > gate deliberately excludes LLM summaries and so skips otherwise-unchanged docs even on a full crawl.
+
+**Auto Sync Permissions** (team-based external-group ACL — see
+`plans/miro_auto_sync_permissions_9d9e7425.plan.md`):
+
+| File | Edit | Status |
+| --- | --- | --- |
+| `web/src/lib/types.ts` | `ValidSources.Miro` added to `validAutoSyncSources` | `// FORK: miro` |
+| `web/src/lib/connectors/AutoSyncOptionFields.tsx` | `miro: {}` entry (required by `Record<ValidAutoSyncSource, ...>`) | `// FORK: miro` |
+| `backend/onyx/connectors/miro/connector.py` | `MiroConnector` now also implements `SlimConnectorWithPermSync`: `retrieve_all_slim_docs_perm_sync` tags each asset with its board's `ExternalAccess` (`_board_external_access`: org/public-link → public, team access → `miro_team_<team_id>` group, private-to-individuals → admin-only); org helpers `_get_org_id`, `_iter_paginated`, `get_team_member_email_map`, `probe_org_member_access`; optional `miro_org_id` (auto-discovered via `/v1/oauth-token`) | net-new file, no marker needed |
+| `backend/ee/onyx/external_permissions/miro/doc_sync.py` | `miro_doc_sync` (wraps `generic_doc_sync`, Monday pattern) | net-new file |
+| `backend/ee/onyx/external_permissions/miro/group_sync.py` | `miro_group_sync` (teams → member emails → `ExternalUserGroup(miro_team_<id>)`) | net-new file |
+| `backend/ee/onyx/external_permissions/sync_params.py` | `DocumentSource.MIRO` entry in `_SOURCE_TO_SYNC_CONFIG` (doc sync + cc-pair-agnostic group sync) + imports | `# FORK: miro` |
+| `backend/ee/onyx/configs/app_configs.py` | `MIRO_PERMISSION_DOC_SYNC_FREQUENCY` / `MIRO_PERMISSION_GROUP_SYNC_FREQUENCY` (default 30 min) | `# FORK: miro` |
+| `backend/ee/onyx/connectors/perm_sync_valid.py` | `validate_miro_perm_sync` branch — probes the org-members API so a non-org token fails fast | `# FORK: miro` |
+| `backend/tests/unit/onyx/connectors/miro/test_miro_perm_sync.py` | board sharing-policy -> ExternalAccess, team-member email join, slim-doc perm sync (all Miro API mocked) | net-new file |
+
+> Perm sync requires an **organization-scoped** Miro token (indexing works with a board-only
+> token). Access is team-based: boards grant access via `sharingPolicy.teamAccess` on the board's
+> team, and member emails come from `GET /v2/orgs/{org_id}/members` (board-member IDs are in a
+> separate user-id space with no email endpoint, so per-individual board shares fall back to their
+> team group or admin-only — fails closed, never over-shares). `initial_index_should_sync=False`:
+> assets index first, then the beat doc-permission + external-group sync jobs apply access.

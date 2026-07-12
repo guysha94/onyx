@@ -24,6 +24,7 @@ from urllib.parse import urlencode
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
 
+from onyx.access.models import ExternalAccess
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import FileOrigin
@@ -33,13 +34,17 @@ from onyx.connectors.exceptions import ConnectorValidationError
 from onyx.connectors.exceptions import CredentialExpiredError
 from onyx.connectors.exceptions import InsufficientPermissionsError
 from onyx.connectors.interfaces import GenerateDocumentsOutput
+from onyx.connectors.interfaces import GenerateSlimDocumentOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
+from onyx.connectors.interfaces import SlimConnectorWithPermSync
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
 from onyx.connectors.models import ImageSection
+from onyx.connectors.models import SlimDocument
 from onyx.connectors.models import TextSection
+from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.file_processing.file_types import OnyxMimeTypes
 from onyx.file_processing.image_utils import store_image_and_create_section
 from onyx.utils.b64 import get_image_type_from_bytes
@@ -51,7 +56,19 @@ _NUM_RETRIES = 5
 _TIMEOUT = 60
 _BOARDS_PAGE_LIMIT = 50
 _ITEMS_PAGE_LIMIT = 50
+_ORG_PAGE_LIMIT = 100
 _MIRO_API_BASE = "https://api.miro.com/v2"
+_MIRO_OAUTH_TOKEN_URL = "https://api.miro.com/v1/oauth-token"
+
+# Miro `sharingPolicy` access-level values that grant read access to a scope
+# (as opposed to "private"/"no_access"). Used to translate a board's sharing
+# policy into an Onyx `ExternalAccess`.
+_ACCESS_LEVELS_GRANTING = {"view", "comment", "edit"}
+
+# Prefix for the Onyx external-group id that represents a Miro team. Kept in
+# sync between `retrieve_all_slim_docs_perm_sync` (which tags assets with the
+# group) and the EE `miro_group_sync` (which populates the group's emails).
+_TEAM_GROUP_ID_PREFIX = "miro_team_"
 
 # Item types that carry short free-text content. These are never indexed as
 # their own documents in the MVP; their text is only used as frame-level
@@ -165,17 +182,25 @@ def _build_asset_title(
     return f"{location} \u2014 {short_item_ref}"
 
 
-class MiroConnector(LoadConnector, PollConnector):
+def team_group_id(team_id: str) -> str:
+    """Onyx external-group id for a Miro team. FORK: miro."""
+    return f"{_TEAM_GROUP_ID_PREFIX}{team_id}"
+
+
+class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     def __init__(
         self,
         board_ids: list[str] | None = None,
         team_id: str | None = None,
+        miro_org_id: str | None = None,
         batch_size: int = INDEX_BATCH_SIZE,
     ) -> None:
         self.board_ids = board_ids or None
         self.team_id = team_id
+        self.miro_org_id = miro_org_id
         self.batch_size = batch_size
         self.miro_access_token: str | None = None
+        self._org_id_cache: str | None = None
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         if "miro_access_token" not in credentials:
@@ -624,3 +649,163 @@ class MiroConnector(LoadConnector, PollConnector):
         start_time = datetime.fromtimestamp(start, tz=timezone.utc)
         end_time = datetime.fromtimestamp(end, tz=timezone.utc)
         yield from self._process_boards(start=start_time, end=end_time)
+
+    # ------------------------------------------------------------------ #
+    # Permission syncing (EE). FORK: miro.
+    #
+    # Miro access is team-based: a board grants access via its
+    # `sharingPolicy` (org-wide / team / private), and member emails come from
+    # the org-level API. So each asset is tagged with its board's team as an
+    # Onyx external group (`miro_team_<team_id>`), and the EE `miro_group_sync`
+    # resolves that group to member emails. Board-member-level (per-individual)
+    # shares are not resolvable to emails (different id space with no email
+    # endpoint), so private boards fall back to admin-only.
+    # ------------------------------------------------------------------ #
+
+    def _iter_paginated(
+        self, url: str, params: dict[str, Any] | None = None
+    ) -> Iterator[dict[str, Any]]:
+        """Iterate a cursor-paginated Miro org endpoint's `data` items."""
+        page_params: dict[str, Any] = dict(params or {})
+        while True:
+            response = self._get_json(url, params=page_params)
+            data = response.get("data") or []
+            yield from data
+
+            cursor = response.get("cursor")
+            if not cursor or not data:
+                break
+            page_params["cursor"] = cursor
+
+    def _get_org_id(self) -> str:
+        if self._org_id_cache:
+            return self._org_id_cache
+        if self.miro_org_id:
+            self._org_id_cache = self.miro_org_id
+            return self._org_id_cache
+
+        token_info = self._get_json(_MIRO_OAUTH_TOKEN_URL)
+        org_id = (token_info.get("organization") or {}).get("id")
+        if not org_id:
+            raise InsufficientPermissionsError(
+                "Could not determine the Miro organization id from the access "
+                "token. Auto Sync Permissions requires an organization-scoped "
+                "token (see the Miro connector README)."
+            )
+        self._org_id_cache = str(org_id)
+        return self._org_id_cache
+
+    @staticmethod
+    def _board_external_access(board: dict[str, Any]) -> ExternalAccess:
+        """Translate a board's Miro `sharingPolicy` into an Onyx ExternalAccess.
+
+        - org-wide or public-link access -> public
+        - team access -> the board's team external group
+        - private (specific individuals only) -> admin-only (fail closed, since
+          per-individual board members are in a user-id space with no email
+          endpoint)
+        """
+        sharing = board.get("sharingPolicy") or (board.get("policy") or {}).get(
+            "sharingPolicy"
+        ) or {}
+        link_access = (sharing.get("access") or "private").lower()
+        org_access = (sharing.get("organizationAccess") or "private").lower()
+        team_access = (sharing.get("teamAccess") or "private").lower()
+        team_id = (board.get("team") or {}).get("id")
+
+        if (
+            link_access in _ACCESS_LEVELS_GRANTING
+            or org_access in _ACCESS_LEVELS_GRANTING
+        ):
+            return ExternalAccess.public()
+
+        if team_access in _ACCESS_LEVELS_GRANTING and team_id:
+            return ExternalAccess(
+                external_user_emails=set(),
+                external_user_group_ids={team_group_id(str(team_id))},
+                is_public=False,
+            )
+
+        return ExternalAccess.empty()
+
+    def get_team_member_email_map(self) -> dict[str, set[str]]:
+        """Map each Miro team id -> set of member emails, for group syncing.
+
+        Joins team members (org-member id space) against the org-member list
+        (which carries the emails).
+        """
+        org_id = self._get_org_id()
+
+        email_by_member_id: dict[str, str] = {}
+        for member in self._iter_paginated(
+            f"{_MIRO_API_BASE}/orgs/{org_id}/members",
+            params={"limit": _ORG_PAGE_LIMIT},
+        ):
+            member_id = member.get("id")
+            email = member.get("email")
+            if member_id and email:
+                email_by_member_id[str(member_id)] = email
+
+        team_to_emails: dict[str, set[str]] = {}
+        for team in self._iter_paginated(
+            f"{_MIRO_API_BASE}/orgs/{org_id}/teams",
+            params={"limit": _ORG_PAGE_LIMIT},
+        ):
+            team_id = str(team["id"])
+            emails: set[str] = set()
+            for team_member in self._iter_paginated(
+                f"{_MIRO_API_BASE}/orgs/{org_id}/teams/{team_id}/members",
+                params={"limit": _ORG_PAGE_LIMIT},
+            ):
+                member_id = team_member.get("memberId") or team_member.get("id")
+                if member_id is None:
+                    continue
+                email = email_by_member_id.get(str(member_id))
+                if email:
+                    emails.add(email)
+            team_to_emails[team_id] = emails
+
+        return team_to_emails
+
+    def probe_org_member_access(self) -> None:
+        """Probe the org-members API so a non-org-scoped token fails fast at
+        connector creation rather than mid-sync. Raises
+        CredentialExpiredError / InsufficientPermissionsError on 401 / 403."""
+        org_id = self._get_org_id()
+        self._get_json(
+            f"{_MIRO_API_BASE}/orgs/{org_id}/members", params={"limit": 1}
+        )
+
+    def retrieve_all_slim_docs_perm_sync(
+        self,
+        start: SecondsSinceUnixEpoch | None = None,
+        end: SecondsSinceUnixEpoch | None = None,
+        callback: IndexingHeartbeatInterface | None = None,
+    ) -> GenerateSlimDocumentOutput:
+        if self.miro_access_token is None:
+            raise ConnectorMissingCredentialError("Miro")
+
+        batch: list[SlimDocument] = []
+        for board in self._iter_boards():
+            board_id = str(board["id"])
+            external_access = self._board_external_access(board)
+
+            for item in self._iter_board_items(board_id):
+                if item.get("type") != "image":
+                    continue
+                if not (item.get("data") or {}).get("imageUrl"):
+                    continue
+
+                item_id = str(item["id"])
+                batch.append(
+                    SlimDocument(
+                        id=f"miro__{board_id}__{item_id}",
+                        external_access=external_access,
+                    )
+                )
+                if len(batch) >= self.batch_size:
+                    yield batch
+                    batch = []
+
+        if batch:
+            yield batch

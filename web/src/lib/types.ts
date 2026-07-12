@@ -631,6 +631,7 @@ export const validAutoSyncSources = [
   ValidSources.Sharepoint,
   ValidSources.Teams,
   ValidSources.Monday, // FORK: monday
+  ValidSources.Miro, // FORK: miro
 ] as const;
 
 // Create a type from the array elements
