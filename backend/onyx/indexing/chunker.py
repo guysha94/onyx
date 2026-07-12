@@ -30,14 +30,24 @@ CHUNK_OVERLAP = 0
 # overwhelm the actual contents of the chunk
 MAX_METADATA_PERCENTAGE = 0.25
 CHUNK_MIN_CONTENT = 256
+# Tokens reserved per chunk for the contextual-RAG doc summary + chunk context.
+# Single source of truth — the reindex port reuses it to mirror indexing budgets.
+DEFAULT_CONTEXTUAL_RAG_RESERVED_TOKENS = MAX_CONTEXT_TOKENS * (
+    int(USE_CHUNK_SUMMARY) + int(USE_DOCUMENT_SUMMARY)
+)
 
 logger = setup_logger()
 
 
+<<<<<<< HEAD
 def _get_metadata_suffix_for_document_index(
     metadata: dict[str, str | list[str]],
     include_separator: bool = False,
     source: DocumentSource | None = None,
+=======
+def get_metadata_suffix_for_document_index(
+    metadata: dict[str, str | list[str]], include_separator: bool = False
+>>>>>>> cba40dab1 (feat(reindex): reindex-port flow — copy & re-embed live chunks into the new index (#11977))
 ) -> tuple[str, str]:
     """
     Returns the metadata as a natural language string representation with all of the keys and values
@@ -147,8 +157,8 @@ class Chunker:
             assert USE_CHUNK_SUMMARY or USE_DOCUMENT_SUMMARY, (
                 "Contextual RAG requires at least one of chunk summary and document summary enabled"
             )
-        self.default_contextual_rag_reserved_tokens = MAX_CONTEXT_TOKENS * (
-            int(USE_CHUNK_SUMMARY) + int(USE_DOCUMENT_SUMMARY)
+        self.default_contextual_rag_reserved_tokens = (
+            DEFAULT_CONTEXTUAL_RAG_RESERVED_TOKENS
         )
         self.tokenizer = tokenizer
         self.callback = callback
@@ -212,10 +222,15 @@ class Chunker:
             (
                 metadata_suffix_semantic,
                 metadata_suffix_keyword,
+<<<<<<< HEAD
             ) = _get_metadata_suffix_for_document_index(
                 document.metadata,
                 include_separator=True,
                 source=document.source,
+=======
+            ) = get_metadata_suffix_for_document_index(
+                document.metadata, include_separator=True
+>>>>>>> cba40dab1 (feat(reindex): reindex-port flow — copy & re-embed live chunks into the new index (#11977))
             )
             metadata_tokens = len(self.tokenizer.encode(metadata_suffix_semantic))
 
