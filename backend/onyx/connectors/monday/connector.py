@@ -3,13 +3,13 @@ from collections.abc import Generator
 from datetime import datetime
 from datetime import timezone
 from typing import Any
+from typing import TypedDict
 from typing import cast
 
 from onyx.access.models import ExternalAccess
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
-from onyx.connectors.cross_connector_utils.rate_limit_wrapper import rl_requests
 from onyx.connectors.exceptions import ConnectorValidationError
 from onyx.connectors.exceptions import CredentialExpiredError
 from onyx.connectors.exceptions import InsufficientPermissionsError
@@ -27,17 +27,14 @@ from onyx.connectors.models import ImageSection
 from onyx.connectors.models import SlimDocument
 from onyx.connectors.models import TextSection
 from onyx.connectors.monday.access import get_board_permissions
+from onyx.connectors.monday.client import MondayApiClient
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
-_NUM_RETRIES = 5
-_TIMEOUT = 60
 _BOARDS_PAGE_LIMIT = 50
 _ITEMS_PAGE_LIMIT = 500
-_MONDAY_GRAPHQL_URL = "https://api.monday.com/v2"
-_MONDAY_API_VERSION = "2025-10"
 
 _ITEM_FIELDS_FRAGMENT = """
 fragment ItemFields on Item {
@@ -231,6 +228,13 @@ query MondayBoardAccess($boardId: ID!) {
 """
 
 
+class BoardContext(TypedDict):
+    board_id: str
+    board_name: str
+    workspace_id: str
+    workspace_name: str
+
+
 def _normalize_id_filter(ids: list[str] | None) -> list[str] | None:
     if not ids:
         return None
@@ -288,7 +292,27 @@ def _column_metadata(column_values: list[dict[str, Any]]) -> dict[str, str]:
     return metadata
 
 
-class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnectorWithPermSync):
+def _board_context_from_board(board: dict[str, Any]) -> BoardContext:
+    board_id = str(board["id"])
+    board_name = board.get("name") or f"Board {board_id}"
+    workspace = board.get("workspace") or {}
+    workspace_id = str(workspace.get("id") or "")
+    workspace_name = workspace.get("name") or "Workspace"
+    return BoardContext(
+        board_id=board_id,
+        board_name=board_name,
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+    )
+
+
+def _hierarchy_context_blurb(workspace_name: str, board_name: str) -> str:
+    return f"Workspace: {workspace_name}\nBoard: {board_name}"
+
+
+class MondayConnector(
+    LoadConnector, PollConnector, SlimConnector, SlimConnectorWithPermSync
+):
     def __init__(
         self,
         board_ids: list[str] | None = None,
@@ -298,88 +322,98 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
         self.board_ids = board_ids
         self.workspace_ids = workspace_ids
         self.batch_size = batch_size
-        self.monday_api_token: str | None = None
+        self._client: MondayApiClient | None = None
         self._board_access_data_cache: dict[str, dict[str, Any] | None] = {}
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         if "monday_api_token" not in credentials:
             raise ConnectorMissingCredentialError("Monday")
 
-        self.monday_api_token = cast(str, credentials["monday_api_token"])
+        self._client = MondayApiClient(cast(str, credentials["monday_api_token"]))
         return None
 
-    def _headers(self) -> dict[str, str]:
-        if self.monday_api_token is None:
+    def _require_client(self) -> MondayApiClient:
+        if self._client is None:
             raise ConnectorMissingCredentialError("Monday")
-
-        return {
-            "Authorization": self.monday_api_token,
-            "API-Version": _MONDAY_API_VERSION,
-            "Content-Type": "application/json",
-        }
+        return self._client
 
     def _run_query(
         self, query: str, variables: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        if self.monday_api_token is None:
-            raise ConnectorMissingCredentialError("Monday")
+        return self._require_client().run_query(query, variables)
 
-        request_body: dict[str, Any] = {"query": query}
-        if variables is not None:
-            request_body["variables"] = variables
+    def _workspace_name_by_id(self, workspace_ids: list[str]) -> dict[str, str]:
+        client = self._require_client()
+        all_workspaces = client.list_workspaces()
+        names = {
+            str(workspace["id"]): workspace.get("name")
+            or f"Workspace {workspace['id']}"
+            for workspace in all_workspaces
+        }
+        return {
+            workspace_id: names.get(workspace_id, f"Workspace {workspace_id}")
+            for workspace_id in workspace_ids
+        }
 
-        for attempt in range(_NUM_RETRIES):
-            try:
-                response = rl_requests.post(
-                    _MONDAY_GRAPHQL_URL,
-                    headers=self._headers(),
-                    json=request_body,
-                    timeout=_TIMEOUT,
+    def _iter_board_contexts(self) -> Generator[BoardContext, None, None]:
+        client = self._require_client()
+        board_ids = _normalize_id_filter(self.board_ids)
+        workspace_ids = _normalize_id_filter(self.workspace_ids)
+
+        if board_ids and not workspace_ids:
+            variables: dict[str, Any] = {
+                "boardsLimit": _BOARDS_PAGE_LIMIT,
+                "page": 1,
+                "boardIds": board_ids,
+                "workspaceIds": None,
+            }
+            boards = self._run_query(_LIST_BOARDS_QUERY, variables).get("boards", [])
+            for board in boards:
+                yield _board_context_from_board(board)
+            return
+
+        if workspace_ids:
+            workspace_names = self._workspace_name_by_id(workspace_ids)
+            workspaces = [
+                (workspace_id, workspace_names[workspace_id])
+                for workspace_id in workspace_ids
+            ]
+        else:
+            workspaces = [
+                (
+                    str(workspace["id"]),
+                    workspace.get("name") or f"Workspace {workspace['id']}",
                 )
-                if response.status_code == 401:
-                    raise CredentialExpiredError(
-                        "Invalid monday.com API token (HTTP 401)."
-                    )
-                if response.status_code == 403:
-                    raise InsufficientPermissionsError(
-                        "Insufficient permissions for monday.com API (HTTP 403)."
-                    )
-                if not response.ok:
-                    raise RuntimeError(
-                        f"Error querying monday.com API (status={response.status_code}): "
-                        f"{response.text}"
-                    )
+                for workspace in client.list_workspaces()
+            ]
 
-                response_json = response.json()
-                if errors := response_json.get("errors"):
-                    error_messages = "; ".join(
-                        str(error.get("message", error)) for error in errors
-                    )
-                    raise RuntimeError(f"monday.com GraphQL error: {error_messages}")
+        int_board_ids = [int(board_id) for board_id in board_ids] if board_ids else None
 
-                data = response_json.get("data")
-                if data is None:
-                    raise RuntimeError(
-                        f"monday.com GraphQL response missing data: {response_json}"
-                    )
-                return cast(dict[str, Any], data)
-            except (CredentialExpiredError, InsufficientPermissionsError):
-                raise
-            except Exception as exc:
-                if attempt == _NUM_RETRIES - 1:
-                    raise exc
-                logger.warning(
-                    "A monday.com GraphQL error occurred: %s. Retrying...", exc
+        for workspace_id, workspace_name in workspaces:
+            page = 1
+            while True:
+                boards = client.list_boards_page(
+                    limit=_BOARDS_PAGE_LIMIT,
+                    page=page,
+                    workspace_ids=[int(workspace_id)],
+                    ids=int_board_ids,
                 )
+                if not boards:
+                    break
 
-        raise RuntimeError(
-            "Unexpected execution when querying monday.com. This should never happen."
-        )
+                for board in boards:
+                    yield BoardContext(
+                        board_id=str(board["id"]),
+                        board_name=board.get("name") or f"Board {board['id']}",
+                        workspace_id=workspace_id,
+                        workspace_name=workspace_name,
+                    )
+
+                if board_ids or len(boards) < _BOARDS_PAGE_LIMIT:
+                    break
+                page += 1
 
     def validate_connector_settings(self) -> None:
-        if self.monday_api_token is None:
-            raise ConnectorMissingCredentialError("Monday")
-
         try:
             data = self._run_query(_VALIDATE_QUERY)
             if not data.get("me", {}).get("id"):
@@ -396,21 +430,13 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
             ) from exc
 
     def validate_perm_sync(self) -> None:
-        boards = self._run_query(
-            _LIST_BOARDS_QUERY,
-            {
-                "boardsLimit": 1,
-                "page": 1,
-                "boardIds": _normalize_id_filter(self.board_ids),
-                "workspaceIds": _normalize_id_filter(self.workspace_ids),
-            },
-        ).get("boards", [])
-        if not boards:
+        board_contexts = list(self._iter_board_contexts())
+        if not board_contexts:
             raise ConnectorValidationError(
                 "monday.com permission sync validation could not find any accessible boards."
             )
 
-        board_id = str(boards[0]["id"])
+        board_id = board_contexts[0]["board_id"]
         external_access = get_board_permissions(
             self._run_query, board_id, add_prefix=False
         )
@@ -421,12 +447,10 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
 
     def _get_board_access_data(self, board_id: str) -> dict[str, Any] | None:
         if board_id not in self._board_access_data_cache:
-            boards = self._run_query(
-                _BOARD_ACCESS_QUERY, {"boardId": board_id}
-            ).get("boards", [])
-            self._board_access_data_cache[board_id] = (
-                boards[0] if boards else None
+            boards = self._run_query(_BOARD_ACCESS_QUERY, {"boardId": board_id}).get(
+                "boards", []
             )
+            self._board_access_data_cache[board_id] = boards[0] if boards else None
 
         return self._board_access_data_cache[board_id]
 
@@ -448,18 +472,23 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
     def _build_document(
         self,
         item: dict[str, Any],
-        board_name: str,
-        workspace_name: str,
+        board_context: BoardContext,
     ) -> Document:
         item_id = str(item["id"])
         item_name = item.get("name") or f"Item {item_id}"
         item_url = item.get("url") or f"monday__{item_id}"
 
+        board_id = board_context["board_id"]
+        board_name = board_context["board_name"]
+        workspace_id = board_context["workspace_id"]
+        workspace_name = board_context["workspace_name"]
+
         column_values = item.get("column_values") or []
         assets = item.get("assets") or []
         group_title = (item.get("group") or {}).get("title")
 
-        body_parts = [item_name]
+        context_blurb = _hierarchy_context_blurb(workspace_name, board_name)
+        body_parts = [context_blurb, item_name]
         column_text = _render_column_values(column_values)
         if column_text:
             body_parts.append(column_text)
@@ -495,6 +524,9 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
         metadata: dict[str, str] = {
             k: str(v)
             for k, v in {
+                "workspace_id": workspace_id or None,
+                "workspace_name": workspace_name,
+                "board_id": board_id,
                 "board_name": board_name,
                 "group": group_title,
                 "created_at": item.get("created_at"),
@@ -518,6 +550,9 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
             doc_metadata={
                 "hierarchy": {
                     "source_path": [workspace_name, board_name],
+                    "workspace_id": workspace_id,
+                    "workspace_name": workspace_name,
+                    "board_id": board_id,
                     "board_name": board_name,
                 }
             },
@@ -527,8 +562,7 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
     def _append_items_to_batch(
         self,
         items: list[dict[str, Any]],
-        board_name: str,
-        workspace_name: str,
+        board_context: BoardContext,
         start: datetime | None,
         end: datetime | None,
         batch: list[Document],
@@ -540,8 +574,7 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
             batch.append(
                 self._build_document(
                     item=item,
-                    board_name=board_name,
-                    workspace_name=workspace_name,
+                    board_context=board_context,
                 )
             )
             if len(batch) >= self.batch_size:
@@ -552,13 +585,12 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
 
     def _process_board_items(
         self,
-        board_id: str,
-        board_name: str,
-        workspace_name: str,
+        board_context: BoardContext,
         start: datetime | None,
         end: datetime | None,
         batch: list[Document],
     ) -> Generator[list[Document], None, list[Document]]:
+        board_id = board_context["board_id"]
         board_response = self._run_query(
             _BOARD_ITEMS_PAGE_QUERY,
             {"boardId": board_id, "itemsLimit": _ITEMS_PAGE_LIMIT},
@@ -568,13 +600,20 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
             return batch
 
         board = board_response[0]
+        if not board_context["workspace_id"]:
+            workspace = board.get("workspace") or {}
+            board_context = BoardContext(
+                board_id=board_id,
+                board_name=board_context["board_name"],
+                workspace_id=str(workspace.get("id") or ""),
+                workspace_name=workspace.get("name") or board_context["workspace_name"],
+            )
 
         items_page = board.get("items_page") or {}
         items = items_page.get("items") or []
         batch = yield from self._append_items_to_batch(
             items=items,
-            board_name=board_name,
-            workspace_name=workspace_name,
+            board_context=board_context,
             start=start,
             end=end,
             batch=batch,
@@ -589,8 +628,7 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
             items = next_page.get("items") or []
             batch = yield from self._append_items_to_batch(
                 items=items,
-                board_name=board_name,
-                workspace_name=workspace_name,
+                board_context=board_context,
                 start=start,
                 end=end,
                 batch=batch,
@@ -604,45 +642,15 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> GenerateDocumentsOutput:
-        if self.monday_api_token is None:
-            raise ConnectorMissingCredentialError("Monday")
-
-        board_ids = _normalize_id_filter(self.board_ids)
-        workspace_ids = _normalize_id_filter(self.workspace_ids)
-        page = 1
         batch: list[Document] = []
 
-        while True:
-            variables: dict[str, Any] = {
-                "boardsLimit": _BOARDS_PAGE_LIMIT,
-                "page": page,
-                "boardIds": board_ids,
-                "workspaceIds": workspace_ids,
-            }
-            boards = self._run_query(_LIST_BOARDS_QUERY, variables).get("boards", [])
-            if not boards:
-                break
-
-            for board in boards:
-                board_id = str(board["id"])
-                board_name = board.get("name") or f"Board {board_id}"
-                workspace_name = (board.get("workspace") or {}).get(
-                    "name"
-                ) or "Workspace"
-                batch = yield from self._process_board_items(
-                    board_id=board_id,
-                    board_name=board_name,
-                    workspace_name=workspace_name,
-                    start=start,
-                    end=end,
-                    batch=batch,
-                )
-
-            if board_ids:
-                break
-            if len(boards) < _BOARDS_PAGE_LIMIT:
-                break
-            page += 1
+        for board_context in self._iter_board_contexts():
+            batch = yield from self._process_board_items(
+                board_context=board_context,
+                start=start,
+                end=end,
+                batch=batch,
+            )
 
         if batch:
             yield batch
@@ -732,41 +740,17 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
         *,
         include_permissions: bool,
     ) -> GenerateSlimDocumentOutput:
-        if self.monday_api_token is None:
-            raise ConnectorMissingCredentialError("Monday")
-
         self._board_access_data_cache.clear()
-        board_ids = _normalize_id_filter(self.board_ids)
-        workspace_ids = _normalize_id_filter(self.workspace_ids)
-        page = 1
         batch: list[SlimDocument] = []
 
-        while True:
-            variables: dict[str, Any] = {
-                "boardsLimit": _BOARDS_PAGE_LIMIT,
-                "page": page,
-                "boardIds": board_ids,
-                "workspaceIds": workspace_ids,
-            }
-            boards = self._run_query(_LIST_BOARDS_QUERY, variables).get("boards", [])
-            if not boards:
-                break
-
-            for board in boards:
-                board_id = str(board["id"])
-                batch = yield from self._process_board_slim_items(
-                    board_id=board_id,
-                    start=start,
-                    end=end,
-                    batch=batch,
-                    include_permissions=include_permissions,
-                )
-
-            if board_ids:
-                break
-            if len(boards) < _BOARDS_PAGE_LIMIT:
-                break
-            page += 1
+        for board_context in self._iter_board_contexts():
+            batch = yield from self._process_board_slim_items(
+                board_id=board_context["board_id"],
+                start=start,
+                end=end,
+                batch=batch,
+                include_permissions=include_permissions,
+            )
 
         if batch:
             yield batch
@@ -778,7 +762,9 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
         callback: IndexingHeartbeatInterface | None = None,  # noqa: ARG002
     ) -> GenerateSlimDocumentOutput:
         start_time = (
-            datetime.fromtimestamp(start, tz=timezone.utc) if start is not None else None
+            datetime.fromtimestamp(start, tz=timezone.utc)
+            if start is not None
+            else None
         )
         end_time = (
             datetime.fromtimestamp(end, tz=timezone.utc) if end is not None else None
@@ -796,7 +782,9 @@ class MondayConnector(LoadConnector, PollConnector, SlimConnector, SlimConnector
         callback: IndexingHeartbeatInterface | None = None,  # noqa: ARG002
     ) -> GenerateSlimDocumentOutput:
         start_time = (
-            datetime.fromtimestamp(start, tz=timezone.utc) if start is not None else None
+            datetime.fromtimestamp(start, tz=timezone.utc)
+            if start is not None
+            else None
         )
         end_time = (
             datetime.fromtimestamp(end, tz=timezone.utc) if end is not None else None

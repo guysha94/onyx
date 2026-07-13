@@ -1,3 +1,20 @@
+import json
+from typing import Any
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
+import pytest
+
+from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
+    get_metadata_keys_to_ignore,
+)
+from onyx.connectors.exceptions import CredentialExpiredError
+from onyx.connectors.exceptions import InsufficientPermissionsError
+from onyx.connectors.monday.client import MondayApiClient
+from onyx.connectors.monday.connector import BoardContext
+from onyx.connectors.monday.connector import MondayConnector
+from onyx.connectors.monday.connector import _hierarchy_context_blurb
 from onyx.connectors.monday.connector import _normalize_id_filter
 
 
@@ -11,3 +28,170 @@ def test_normalize_id_filter_none_stays_none() -> None:
 
 def test_normalize_id_filter_preserves_values() -> None:
     assert _normalize_id_filter(["123", "456"]) == ["123", "456"]
+
+
+def test_hierarchy_context_blurb() -> None:
+    assert _hierarchy_context_blurb("Marketing", "Sprint Board") == (
+        "Workspace: Marketing\nBoard: Sprint Board"
+    )
+
+
+def test_build_document_includes_hierarchy_metadata_and_context() -> None:
+    connector = MondayConnector()
+    connector.load_credentials({"monday_api_token": "token"})
+
+    board_context = BoardContext(
+        board_id="200",
+        board_name="Sprint Board",
+        workspace_id="100",
+        workspace_name="Marketing",
+    )
+    item: dict[str, Any] = {
+        "id": "300",
+        "name": "Fix login bug",
+        "url": "https://acme.monday.com/boards/200/pulses/300",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-02-01T00:00:00Z",
+        "group": {"title": "In Progress"},
+        "column_values": [
+            {
+                "id": "status",
+                "text": "Working on it",
+                "column": {"title": "Status"},
+            }
+        ],
+        "updates": [],
+        "assets": [],
+        "creator": {"name": "Alice", "email": "alice@example.com"},
+    }
+
+    document = connector._build_document(item=item, board_context=board_context)
+
+    assert document.metadata["workspace_id"] == "100"
+    assert document.metadata["workspace_name"] == "Marketing"
+    assert document.metadata["board_id"] == "200"
+    assert document.metadata["board_name"] == "Sprint Board"
+    assert document.metadata["group"] == "In Progress"
+    assert document.metadata["Status"] == "Working on it"
+
+    hierarchy = document.doc_metadata["hierarchy"]
+    assert hierarchy["source_path"] == ["Marketing", "Sprint Board"]
+    assert hierarchy["workspace_id"] == "100"
+    assert hierarchy["workspace_name"] == "Marketing"
+    assert hierarchy["board_id"] == "200"
+    assert hierarchy["board_name"] == "Sprint Board"
+
+    section_text = document.sections[0].text
+    assert section_text is not None
+    assert section_text.startswith("Workspace: Marketing\nBoard: Sprint Board")
+    assert "Fix login bug" in section_text
+
+
+def test_monday_metadata_keys_to_ignore() -> None:
+    ignored = get_metadata_keys_to_ignore(DocumentSource.MONDAY)
+    assert "workspace_id" in ignored
+    assert "board_id" in ignored
+    assert "workspace_name" not in ignored
+    assert "board_name" not in ignored
+
+
+def _mock_http_response(status: int, body: dict[str, Any]) -> MagicMock:
+    response = MagicMock()
+    response.status = status
+    response.data = json.dumps(body).encode("utf-8")
+    return response
+
+
+def test_monday_api_client_run_query_success() -> None:
+    client = MondayApiClient("token")
+    response_body = {"data": {"me": {"id": "1"}}}
+
+    with patch.object(
+        client._http, "request", return_value=_mock_http_response(200, response_body)
+    ):
+        data = client.run_query("query { me { id } }")
+
+    assert data == {"me": {"id": "1"}}
+
+
+def test_monday_api_client_run_query_401() -> None:
+    client = MondayApiClient("token")
+
+    with patch.object(
+        client._http,
+        "request",
+        return_value=_mock_http_response(401, {"error": "unauthorized"}),
+    ):
+        with pytest.raises(CredentialExpiredError):
+            client.run_query("query { me { id } }")
+
+
+def test_monday_api_client_run_query_403() -> None:
+    client = MondayApiClient("token")
+
+    with patch.object(
+        client._http,
+        "request",
+        return_value=_mock_http_response(403, {"error": "forbidden"}),
+    ):
+        with pytest.raises(InsufficientPermissionsError):
+            client.run_query("query { me { id } }")
+
+
+def test_monday_api_client_run_query_graphql_error() -> None:
+    client = MondayApiClient("token")
+    response_body = {"errors": [{"message": "Invalid query"}]}
+
+    with patch.object(
+        client._http, "request", return_value=_mock_http_response(200, response_body)
+    ):
+        with pytest.raises(RuntimeError, match="monday.com GraphQL error"):
+            client.run_query("query { bad }")
+
+
+def test_monday_api_client_list_workspaces() -> None:
+    client = MondayApiClient("token")
+    client._sdk.workspaces.get_workspaces = MagicMock(
+        return_value={"data": {"workspaces": [{"id": "1", "name": "Main"}]}}
+    )
+
+    workspaces = client.list_workspaces()
+
+    assert workspaces == [{"id": "1", "name": "Main"}]
+
+
+def test_monday_api_client_list_boards_page() -> None:
+    client = MondayApiClient("token")
+    client._sdk.boards.fetch_boards = MagicMock(
+        return_value={"data": {"boards": [{"id": "10", "name": "Roadmap"}]}}
+    )
+
+    boards = client.list_boards_page(limit=50, page=1, workspace_ids=[1])
+
+    assert boards == [{"id": "10", "name": "Roadmap"}]
+    client._sdk.boards.fetch_boards.assert_called_once_with(
+        limit=50,
+        page=1,
+        workspace_ids=[1],
+        ids=None,
+    )
+
+
+def test_iter_board_contexts_workspace_first() -> None:
+    connector = MondayConnector()
+    connector.load_credentials({"monday_api_token": "token"})
+    connector._client = MagicMock()
+    connector._client.list_workspaces.return_value = [
+        {"id": "1", "name": "Marketing"},
+    ]
+    connector._client.list_boards_page.return_value = [
+        {"id": "10", "name": "Sprint Board"},
+    ]
+
+    contexts = list(connector._iter_board_contexts())
+
+    assert len(contexts) == 1
+    assert contexts[0]["workspace_id"] == "1"
+    assert contexts[0]["workspace_name"] == "Marketing"
+    assert contexts[0]["board_id"] == "10"
+    assert contexts[0]["board_name"] == "Sprint Board"

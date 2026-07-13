@@ -51,9 +51,14 @@ def test_monday_connector_basic(monday_connector: MondayConnector) -> None:
         assert doc.source == DocumentSource.MONDAY
         assert doc.doc_updated_at is not None
         assert doc.metadata.get("board_name")
+        assert doc.metadata.get("board_id")
+        assert doc.metadata.get("workspace_name")
         assert len(doc.sections) >= 1
         assert doc.sections[0].link
         assert "monday.com" in doc.sections[0].link or doc.id.startswith("monday__")
+        section_text = doc.sections[0].text or ""
+        assert "Workspace:" in section_text
+        assert "Board:" in section_text
 
 
 def test_monday_connector_poll_window(monday_connector: MondayConnector) -> None:

@@ -125,6 +125,9 @@ _SOURCE_METADATA_KEYS_TO_IGNORE: dict[DocumentSource, list[str]] = {
     # but must not appear in the embedded metadata suffix — generic filenames
     # like "image_720.png" would pollute the semantic vectors.
     DocumentSource.MIRO: ["board_id", "miro_item_id", "asset_filename"],
+    # FORK: monday - workspace_id and board_id are exact-match Tag filters but
+    # add no semantic retrieval value; names are in metadata suffix and body.
+    DocumentSource.MONDAY: ["workspace_id", "board_id"],
 }
 
 
