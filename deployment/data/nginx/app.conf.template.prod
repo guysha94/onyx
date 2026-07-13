@@ -49,6 +49,11 @@ server {
         return 200 "ok\n";
     }
 
+    # ACME HTTP-01 must be served by nginx, not the web upstream.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
     location ~ ^/scim(/.*)?$ {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -118,10 +123,6 @@ server {
         # redirects, we set the Host: header above already.
         proxy_redirect off;
         proxy_pass http://web_server;
-    }
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
     }
 }
 

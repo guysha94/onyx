@@ -399,6 +399,9 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Full SSO integration (Google Workspace OAuth, SAML, or OIDC) is required for the SuperPlay deployment, not optional.
 - Prefer Google OAuth over email/password for self-hosted authentication (`AUTH_TYPE=google_oauth`).
 - UI rebrand target is Claude-style conversational UX with SuperPlay branding (superplay.co palette, icons, typography).
+- SuperPlay homelab dev stack (`mise run dev:gpu`) should serve HTTPS on port 443 via nginx + Let's Encrypt, not direct `:3000` access.
+- Prefer manual DNS-01 Let's Encrypt for homelab (certbot prints TXT record for Route 53; no AWS API creds); use HTTP-01 only if port 80 is forwarded and manual DNS is inconvenient.
+- Windows dev host: mise deployment tasks should use PowerShell (`run_windows`), not bash.
 - When fixing Docker build issues for web workspace packages, put fixes in the Dockerfile rather than changing `package.json` scripts (scripts must stay compatible with upstream/main for merging).
 - Miro/image assets must have meaningful per-asset titles (never placeholder filenames like `4.png`/`image.png`) and clear, highly informative vision captions (subject, style, colours, layout — who/what/where/when/how); store the image summary in `doc_summary` and vector it into both the title and content vectors.
 
@@ -412,6 +415,10 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Custom source forks (e.g. Monday, Miro) are added via the fork pattern: register only in `backend/onyx/connectors/fork_registry.py` (never edit the body of `backend/onyx/connectors/registry.py`), tag any edits to shared/core files with `# FORK: <name>`, log changes in `FORK_CHANGES.md`, and use simple static API-token auth with `LoadConnector`/`PollConnector` rather than full OAuth for MVP scope.
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
+- Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch).
+- Homelab production URL is `https://sp-ai-platform.superplay.dev` (`superplay.dev` DNS on Route 53); set `WEB_DOMAIN` accordingly in root and compose `.env` files.
+- `mise run dev:gpu` merges `docker-compose.dev-ssl.yml` for nginx on 80/443 with Let's Encrypt; one-time bootstrap via `mise run dev:gpu:init-certs`.
+- HTTPS/nginx DOMAIN config lives in `deployment/docker_compose/.env.nginx` (`CERTBOT_CHALLENGE=manual-dns` default); use `dev:gpu:init-certs` in an interactive terminal; `dev:gpu:bootstrap-nginx` if nginx lacks certs; `dev:gpu:check-ports` only for HTTP-01 fallback.
 - Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch at `https://localhost:9200`, self-signed cert + basic-auth admin; active chunk index `danswer_chunk_nomic_ai_nomic_embed_text_v1`, nomic-embed-text-v1 embeddings).
 - Two LLM providers are configured: `ollama` and `gemini`/Vertex AI; `gemini-2.5-flash` is the active default vision model for Miro image captioning. `llava:7b` times out (180 s) and produces poor captions; `gemma4:e2b-mlx` crashes the Ollama llama-server when images are passed (upstream Ollama bug) — avoid both for vision tasks.
 - Web Docker builds for workspace packages (`lib/shared`, `lib/opal`) use `bun install --frozen-lockfile --ignore-scripts` followed by explicit `bun run build` per package, to avoid `node` failing to resolve devDependencies (e.g. `style-dictionary`) during lifecycle scripts.
