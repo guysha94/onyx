@@ -16,10 +16,22 @@ run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DE
 
 
 [tasks."dev:gpu"]
-description = "Run dev with compose watch"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml up -d --wait && exec docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml watch"
+description = "Run dev with GPU and HTTPS (nginx + Let's Encrypt on 443)"
+run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev-ssl.yml up -d --build --wait"
 
+[tasks."dev:gpu:bootstrap-nginx"]
+description = "Restore temporary cert if nginx cannot start"
+run_windows = "powershell -NoProfile -ExecutionPolicy Bypass -File {{vars.DEPLOYMENT_DIR}}/bootstrap-nginx-cert.ps1"
+
+[tasks."dev:gpu:check-ports"]
+description = "Verify router forwards public port 80/443 to nginx"
+run_windows = "powershell -NoProfile -ExecutionPolicy Bypass -File {{vars.DEPLOYMENT_DIR}}/check-public-ports.ps1"
+
+[tasks."dev:gpu:init-certs"]
+description = "Bootstrap Let's Encrypt certs for dev:gpu (run once before first dev:gpu)"
+run = "bash {{vars.DEPLOYMENT_DIR}}/init-letsencrypt-dev.sh"
+run_windows = "powershell -NoProfile -ExecutionPolicy Bypass -File {{vars.DEPLOYMENT_DIR}}/init-letsencrypt-dev.ps1"
 
 [tasks.down]
 description = "Stop dev containers"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml down"
+run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev-ssl.yml down"

@@ -36,6 +36,7 @@ jira_test_env
 settings.json
 
 # others
+/deployment/data/certbot/
 /deployment/data/nginx/app.conf
 /deployment/data/nginx/mcp.conf.inc
 /deployment/data/nginx/mcp_upstream.conf.inc
@@ -69,3 +70,4 @@ plans/
 !.claude/settings.json
 .understand-anything/
 graphify-out/
+service_account.json

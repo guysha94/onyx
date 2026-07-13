@@ -1,0 +1,65 @@
+# HTTPS / Let's Encrypt override for local dev (use with dev:gpu).
+#
+# Requires a one-time certificate bootstrap:
+#   mise run dev:gpu:init-certs
+#
+# Manual DNS-01 (default, CERTBOT_CHALLENGE=manual-dns in .env.nginx):
+#   - Certbot prints a TXT record; create it in Route 53, then press Enter
+#   - No inbound port 80 required; auto-renew is disabled (re-run init-certs before expiry)
+#
+# HTTP-01 fallback (CERTBOT_CHALLENGE=webroot):
+#   - DNS A record for DOMAIN -> your public IP
+#   - Router forwards TCP 80 and 443 -> this host
+#   - Verify with: mise run dev:gpu:check-ports
+
+services:
+  api_server:
+    environment:
+      - WEB_DOMAIN=${WEB_DOMAIN:-https://sp-ai-platform.superplay.dev}
+
+  background:
+    environment:
+      - WEB_DOMAIN=${WEB_DOMAIN:-https://sp-ai-platform.superplay.dev}
+
+  web_server:
+    environment:
+      - WEB_DOMAIN=${WEB_DOMAIN:-https://sp-ai-platform.superplay.dev}
+
+  nginx:
+    ports: !override
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../data/certbot/conf:/etc/letsencrypt
+      - ../data/certbot/www:/var/www/certbot
+    env_file:
+      - .env.nginx
+    environment:
+      - DOMAIN=${DOMAIN:-sp-ai-platform.superplay.dev}
+    command: >
+      /bin/sh -c "rm -f /etc/nginx/conf.d/default.conf
+      && cp -a /nginx-templates/. /etc/nginx/conf.d/
+      && sed 's/\r$//' /etc/nginx/conf.d/run-nginx.sh > /tmp/run-nginx.sh
+      && chmod +x /tmp/run-nginx.sh
+      && /tmp/run-nginx.sh app.conf.template.prod"
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    env_file:
+      - .env.nginx
+    volumes:
+      - ../data/certbot/conf:/etc/letsencrypt
+      - ../data/certbot/www:/var/www/certbot
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ "$${CERTBOT_CHALLENGE:-manual-dns}" = "manual-dns" ]; then
+          echo "Manual DNS-01: auto-renew disabled. Re-run mise run dev:gpu:init-certs before expiry."
+          trap exit TERM
+          while :; do sleep 86400 & wait $${!}; done
+        else
+          trap exit TERM
+          while :; do certbot renew; sleep 12h & wait $${!}; done
+        fi

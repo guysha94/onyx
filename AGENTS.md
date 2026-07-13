@@ -399,6 +399,9 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Full SSO integration (Google Workspace OAuth, SAML, or OIDC) is required for the SuperPlay deployment, not optional.
 - Prefer Google OAuth over email/password for self-hosted authentication (`AUTH_TYPE=google_oauth`).
 - UI rebrand target is Claude-style conversational UX with SuperPlay branding (superplay.co palette, icons, typography).
+- SuperPlay homelab dev stack (`mise run dev:gpu`) should serve HTTPS on port 443 via nginx + Let's Encrypt, not direct `:3000` access.
+- Prefer manual DNS-01 Let's Encrypt for homelab (certbot prints TXT record for Route 53; no AWS API creds); use HTTP-01 only if port 80 is forwarded and manual DNS is inconvenient.
+- Windows dev host: mise deployment tasks should use PowerShell (`run_windows`), not bash.
 
 ## Learned Workspace Facts
 
@@ -409,3 +412,6 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
 - Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch).
+- Homelab production URL is `https://sp-ai-platform.superplay.dev` (`superplay.dev` DNS on Route 53); set `WEB_DOMAIN` accordingly in root and compose `.env` files.
+- `mise run dev:gpu` merges `docker-compose.dev-ssl.yml` for nginx on 80/443 with Let's Encrypt; one-time bootstrap via `mise run dev:gpu:init-certs`.
+- HTTPS/nginx DOMAIN config lives in `deployment/docker_compose/.env.nginx` (`CERTBOT_CHALLENGE=manual-dns` default); use `dev:gpu:init-certs` in an interactive terminal; `dev:gpu:bootstrap-nginx` if nginx lacks certs; `dev:gpu:check-ports` only for HTTP-01 fallback.

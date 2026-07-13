@@ -1,0 +1,54 @@
+name: onyx-models
+
+services:
+  qwen:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-qwen
+    ports:
+      - "8001:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    env_file:
+      - path: ../../.env
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - Qwen/Qwen3.6-27B
+      - --served-model-name
+      - qwen
+      - --max-model-len
+      - "8192"
+      - --gpu-memory-utilization
+      - "0.50"
+
+  llava:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-llava
+    ports:
+      - "8002:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    env_file:
+      - path: ../../.env
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - llava-hf/llava-1.5-13b-hf
+      - --served-model-name
+      - llava
+      - --gpu-memory-utilization
+      - "0.50"
