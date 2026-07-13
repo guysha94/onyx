@@ -70,3 +70,4 @@ plans/
 .understand-anything/
 graphify-out/
 service_account.json
+*.code-workspace
