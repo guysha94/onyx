@@ -5,7 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from onyx.access.models import ExternalAccess
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.exceptions import ConnectorValidationError
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
     get_metadata_keys_to_ignore,
 )
@@ -177,21 +179,120 @@ def test_monday_api_client_list_boards_page() -> None:
     )
 
 
-def test_iter_board_contexts_workspace_first() -> None:
+def test_build_document_sets_external_access() -> None:
     connector = MondayConnector()
     connector.load_credentials({"monday_api_token": "token"})
+    connector._board_access_data_cache["200"] = {
+        "id": "200",
+        "board_kind": "private",
+        "permissions": "collaborators",
+        "owners": [{"email": "owner@example.com"}],
+        "subscribers": [{"email": "member@example.com"}],
+        "team_owners": [],
+        "team_subscribers": [],
+        "workspace": {"kind": "closed", "users_subscribers": []},
+    }
+
+    with patch(
+        "onyx.connectors.monday.connector.get_board_permissions",
+        return_value=ExternalAccess(
+            external_user_emails={"member@example.com"},
+            external_user_group_ids=set(),
+            is_public=False,
+        ),
+    ):
+        document = connector._build_document(
+            item={
+                "id": "300",
+                "name": "Task",
+                "url": "https://acme.monday.com/boards/200/pulses/300",
+                "column_values": [],
+                "updates": [],
+                "assets": [],
+            },
+            board_context=BoardContext(
+                board_id="200",
+                board_name="General Tasks",
+                workspace_id="100",
+                workspace_name="AI R&D",
+            ),
+        )
+
+    assert document.external_access is not None
+    assert document.external_access.external_user_emails == {"member@example.com"}
+
+
+def test_validate_perm_sync_rejects_empty_private_acl() -> None:
+    connector = MondayConnector()
+    connector.load_credentials({"monday_api_token": "token"})
+    connector._iter_board_contexts = MagicMock(
+        return_value=iter(
+            [
+                BoardContext(
+                    board_id="200",
+                    board_name="General Tasks",
+                    workspace_id="100",
+                    workspace_name="AI R&D",
+                )
+            ]
+        )
+    )
+
+    with patch(
+        "onyx.connectors.monday.connector.get_board_permissions",
+        return_value=ExternalAccess(
+            external_user_emails=set(),
+            external_user_group_ids=set(),
+            is_public=False,
+        ),
+    ):
+        with pytest.raises(ConnectorValidationError, match="empty private ACL"):
+            connector.validate_perm_sync()
+
+
+def test_iter_board_contexts_uses_board_workspace_name() -> None:
+    connector = MondayConnector(workspace_ids=["5485895"])
+    connector.load_credentials({"monday_api_token": "token"})
+
+    # list_workspaces misses the closed workspace (common with API tokens),
+    # so name resolution must come from the board payload.
     connector._client = MagicMock()
-    connector._client.list_workspaces.return_value = [
-        {"id": "1", "name": "Marketing"},
-    ]
-    connector._client.list_boards_page.return_value = [
-        {"id": "10", "name": "Sprint Board"},
-    ]
+    connector._client.list_workspaces.return_value = []
+    connector._client.run_query.return_value = {
+        "boards": [
+            {
+                "id": "6302069973",
+                "name": "General Tasks",
+                "workspace": {"id": "5485895", "name": "AI R&D"},
+            }
+        ]
+    }
 
     contexts = list(connector._iter_board_contexts())
 
     assert len(contexts) == 1
-    assert contexts[0]["workspace_id"] == "1"
-    assert contexts[0]["workspace_name"] == "Marketing"
-    assert contexts[0]["board_id"] == "10"
-    assert contexts[0]["board_name"] == "Sprint Board"
+    assert contexts[0]["workspace_id"] == "5485895"
+    assert contexts[0]["workspace_name"] == "AI R&D"
+    assert contexts[0]["board_id"] == "6302069973"
+    assert contexts[0]["board_name"] == "General Tasks"
+
+
+def test_merge_board_workspace_context_overrides_fallback_name() -> None:
+    from onyx.connectors.monday.connector import _merge_board_workspace_context
+
+    fallback = BoardContext(
+        board_id="6302069973",
+        board_name="General Tasks",
+        workspace_id="5485895",
+        workspace_name="Workspace 5485895",
+    )
+    board = {
+        "id": "6302069973",
+        "name": "General Tasks",
+        "workspace": {"id": "5485895", "name": "AI R&D"},
+    }
+
+    merged = _merge_board_workspace_context(fallback, board)
+
+    assert merged["workspace_name"] == "AI R&D"
+    assert merged["workspace_id"] == "5485895"

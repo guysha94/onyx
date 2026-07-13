@@ -59,6 +59,25 @@ def get_board_permissions(
         ),
     )
 
-    return ee_get_board_permissions(
-        run_query, board_id, item, add_prefix, board_data
+    return ee_get_board_permissions(run_query, board_id, item, add_prefix, board_data)
+
+
+def fetch_board_access_data(
+    run_query: Callable[[str, dict[str, Any] | None], dict[str, Any]],
+    board_id: str,
+) -> dict[str, Any] | None:
+    """Fetch paginated Monday board ACL payload. Requires Enterprise Edition."""
+    if not global_version.is_ee_version():
+        return None
+
+    ee_fetch = cast(
+        Callable[
+            [Callable[[str, dict[str, Any] | None], dict[str, Any]], str],
+            dict[str, Any] | None,
+        ],
+        fetch_versioned_implementation(
+            "onyx.external_permissions.monday.page_access",
+            "fetch_board_access_data",
+        ),
     )
+    return ee_fetch(run_query, board_id)

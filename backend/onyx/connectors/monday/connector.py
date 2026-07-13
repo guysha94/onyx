@@ -26,6 +26,7 @@ from onyx.connectors.models import Document
 from onyx.connectors.models import ImageSection
 from onyx.connectors.models import SlimDocument
 from onyx.connectors.models import TextSection
+from onyx.connectors.monday.access import fetch_board_access_data
 from onyx.connectors.monday.access import get_board_permissions
 from onyx.connectors.monday.client import MondayApiClient
 from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
@@ -183,50 +184,6 @@ query MondayValidate {
 }
 """
 
-_BOARD_ACCESS_QUERY = """
-query MondayBoardAccess($boardId: ID!) {
-    boards(ids: [$boardId]) {
-        id
-        board_kind
-        permissions
-        owners {
-            email
-        }
-        subscribers {
-            email
-        }
-        team_owners(limit: 100, page: 1) {
-            id
-            users(limit: 100, page: 1) {
-                email
-            }
-        }
-        team_subscribers(limit: 100, page: 1) {
-            id
-            users(limit: 100, page: 1) {
-                email
-            }
-        }
-        workspace {
-            id
-            kind
-            users_subscribers(limit: 100, page: 1) {
-                email
-            }
-            owners_subscribers(limit: 100, page: 1) {
-                email
-            }
-            teams_subscribers(limit: 100, page: 1) {
-                id
-                users(limit: 100, page: 1) {
-                    email
-                }
-            }
-        }
-    }
-}
-"""
-
 
 class BoardContext(TypedDict):
     board_id: str
@@ -292,15 +249,62 @@ def _column_metadata(column_values: list[dict[str, Any]]) -> dict[str, str]:
     return metadata
 
 
-def _board_context_from_board(board: dict[str, Any]) -> BoardContext:
+def _is_fallback_workspace_name(workspace_name: str, workspace_id: str) -> bool:
+    if not workspace_name or workspace_name == "Workspace":
+        return True
+    if workspace_id and workspace_name == f"Workspace {workspace_id}":
+        return True
+    return False
+
+
+def _board_context_from_board(
+    board: dict[str, Any],
+    *,
+    fallback_workspace_id: str = "",
+    fallback_workspace_name: str = "Workspace",
+) -> BoardContext:
     board_id = str(board["id"])
     board_name = board.get("name") or f"Board {board_id}"
     workspace = board.get("workspace") or {}
-    workspace_id = str(workspace.get("id") or "")
-    workspace_name = workspace.get("name") or "Workspace"
+    workspace_id = str(workspace.get("id") or fallback_workspace_id or "")
+    workspace_name = workspace.get("name") or ""
+    if not workspace_name or _is_fallback_workspace_name(workspace_name, workspace_id):
+        if fallback_workspace_name and not _is_fallback_workspace_name(
+            fallback_workspace_name, workspace_id or fallback_workspace_id
+        ):
+            workspace_name = fallback_workspace_name
+        elif not workspace_name:
+            workspace_name = (
+                f"Workspace {workspace_id}" if workspace_id else "Workspace"
+            )
     return BoardContext(
         board_id=board_id,
         board_name=board_name,
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+    )
+
+
+def _merge_board_workspace_context(
+    board_context: BoardContext,
+    board: dict[str, Any],
+) -> BoardContext:
+    """Prefer workspace id/name from the board payload over list-workspaces fallbacks."""
+    workspace = board.get("workspace") or {}
+    workspace_id = str(workspace.get("id") or board_context["workspace_id"] or "")
+    workspace_name = workspace.get("name") or ""
+    if not workspace_name or _is_fallback_workspace_name(workspace_name, workspace_id):
+        if not _is_fallback_workspace_name(
+            board_context["workspace_name"], board_context["workspace_id"]
+        ):
+            workspace_name = board_context["workspace_name"]
+        elif not workspace_name:
+            workspace_name = (
+                f"Workspace {workspace_id}" if workspace_id else "Workspace"
+            )
+    return BoardContext(
+        board_id=board_context["board_id"],
+        board_name=board.get("name") or board_context["board_name"],
         workspace_id=workspace_id,
         workspace_name=workspace_name,
     )
@@ -356,57 +360,70 @@ class MondayConnector(
         }
 
     def _iter_board_contexts(self) -> Generator[BoardContext, None, None]:
-        client = self._require_client()
+        """Yield board contexts with workspace names from board GraphQL payloads.
+
+        SDK ``fetch_boards`` omits ``workspace``; closed workspaces may also be
+        missing from ``get_workspaces``. Always list boards via ``_LIST_BOARDS_QUERY``
+        so ``workspace { id name }`` is available on each board.
+        """
         board_ids = _normalize_id_filter(self.board_ids)
         workspace_ids = _normalize_id_filter(self.workspace_ids)
 
         if board_ids and not workspace_ids:
-            variables: dict[str, Any] = {
-                "boardsLimit": _BOARDS_PAGE_LIMIT,
-                "page": 1,
-                "boardIds": board_ids,
-                "workspaceIds": None,
-            }
-            boards = self._run_query(_LIST_BOARDS_QUERY, variables).get("boards", [])
-            for board in boards:
-                yield _board_context_from_board(board)
+            page = 1
+            while True:
+                boards = self._run_query(
+                    _LIST_BOARDS_QUERY,
+                    {
+                        "boardsLimit": _BOARDS_PAGE_LIMIT,
+                        "page": page,
+                        "boardIds": board_ids,
+                        "workspaceIds": None,
+                    },
+                ).get("boards", [])
+                if not boards:
+                    break
+                for board in boards:
+                    yield _board_context_from_board(board)
+                # Explicit board IDs are returned in one page by Monday.
+                break
             return
 
         if workspace_ids:
             workspace_names = self._workspace_name_by_id(workspace_ids)
-            workspaces = [
-                (workspace_id, workspace_names[workspace_id])
-                for workspace_id in workspace_ids
-            ]
+            target_workspace_ids = workspace_ids
         else:
-            workspaces = [
-                (
-                    str(workspace["id"]),
-                    workspace.get("name") or f"Workspace {workspace['id']}",
-                )
-                for workspace in client.list_workspaces()
-            ]
+            client = self._require_client()
+            listed = client.list_workspaces()
+            target_workspace_ids = [str(workspace["id"]) for workspace in listed]
+            workspace_names = {
+                str(workspace["id"]): workspace.get("name")
+                or f"Workspace {workspace['id']}"
+                for workspace in listed
+            }
 
-        int_board_ids = [int(board_id) for board_id in board_ids] if board_ids else None
-
-        for workspace_id, workspace_name in workspaces:
+        for workspace_id in target_workspace_ids:
             page = 1
             while True:
-                boards = client.list_boards_page(
-                    limit=_BOARDS_PAGE_LIMIT,
-                    page=page,
-                    workspace_ids=[int(workspace_id)],
-                    ids=int_board_ids,
-                )
+                boards = self._run_query(
+                    _LIST_BOARDS_QUERY,
+                    {
+                        "boardsLimit": _BOARDS_PAGE_LIMIT,
+                        "page": page,
+                        "boardIds": board_ids,
+                        "workspaceIds": [workspace_id],
+                    },
+                ).get("boards", [])
                 if not boards:
                     break
 
                 for board in boards:
-                    yield BoardContext(
-                        board_id=str(board["id"]),
-                        board_name=board.get("name") or f"Board {board['id']}",
-                        workspace_id=workspace_id,
-                        workspace_name=workspace_name,
+                    yield _board_context_from_board(
+                        board,
+                        fallback_workspace_id=workspace_id,
+                        fallback_workspace_name=workspace_names.get(
+                            workspace_id, f"Workspace {workspace_id}"
+                        ),
                     )
 
                 if board_ids or len(boards) < _BOARDS_PAGE_LIMIT:
@@ -444,13 +461,18 @@ class MondayConnector(
             raise ConnectorValidationError(
                 "monday.com permission sync requires Enterprise Edition."
             )
+        if not external_access.is_public and not external_access.external_user_emails:
+            raise ConnectorValidationError(
+                f"monday.com permission sync resolved an empty private ACL for "
+                f"board {board_id}. Ensure the API token includes scopes: "
+                "boards:read, workspaces:read, users:read, teams:read."
+            )
 
     def _get_board_access_data(self, board_id: str) -> dict[str, Any] | None:
         if board_id not in self._board_access_data_cache:
-            boards = self._run_query(_BOARD_ACCESS_QUERY, {"boardId": board_id}).get(
-                "boards", []
+            self._board_access_data_cache[board_id] = fetch_board_access_data(
+                self._run_query, board_id
             )
-            self._board_access_data_cache[board_id] = boards[0] if boards else None
 
         return self._board_access_data_cache[board_id]
 
@@ -537,6 +559,12 @@ class MondayConnector(
             if v is not None and str(v)
         }
 
+        external_access = self._get_item_external_access(
+            board_id=board_id,
+            item=item,
+            add_prefix=False,
+        )
+
         return Document(
             id=item_url,
             sections=cast(list[TextSection | ImageSection], sections),
@@ -557,6 +585,7 @@ class MondayConnector(
                 }
             },
             metadata=metadata,
+            external_access=external_access,
         )
 
     def _append_items_to_batch(
@@ -600,14 +629,7 @@ class MondayConnector(
             return batch
 
         board = board_response[0]
-        if not board_context["workspace_id"]:
-            workspace = board.get("workspace") or {}
-            board_context = BoardContext(
-                board_id=board_id,
-                board_name=board_context["board_name"],
-                workspace_id=str(workspace.get("id") or ""),
-                workspace_name=workspace.get("name") or board_context["workspace_name"],
-            )
+        board_context = _merge_board_workspace_context(board_context, board)
 
         items_page = board.get("items_page") or {}
         items = items_page.get("items") or []

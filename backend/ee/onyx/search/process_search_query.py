@@ -54,6 +54,16 @@ _MIRO_DOC_ID_PREFIX = "miro__"
 # plain english search terms (which rarely contain digits) as an identifier.
 _BARE_MIRO_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_=-]{8,}$")
 
+# FORK: monday - exact-match Tag fast path for workspace/board ids in queries.
+_MONDAY_WORKSPACE_ID_QUERY_RE = re.compile(
+    r"(?:monday\s+)?workspace\s+(\d{5,})", re.IGNORECASE
+)
+_MONDAY_BOARD_ID_QUERY_RE = re.compile(
+    r"(?:monday\s+)?boards?\s+(\d{5,})", re.IGNORECASE
+)
+_MONDAY_BOARD_URL_RE = re.compile(r"monday\.com/boards/(\d+)", re.IGNORECASE)
+_MONDAY_BARE_NUMERIC_ID_RE = re.compile(r"^\d{5,}$")
+
 
 def _detect_miro_identifier_tag(query: str) -> Tag | None:
     """Classifies a search query as a Miro asset filename, full document id,
@@ -84,6 +94,34 @@ def _detect_miro_identifier_tag(query: str) -> Tag | None:
     return None
 
 
+# FORK: monday
+def _detect_monday_identifier_tag(query: str) -> Tag | None:
+    """Classifies a search query as a Monday workspace or board id, returning
+    the exact-match `Tag` to filter on. Returns `None` for free-text queries.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return None
+
+    if match := _MONDAY_WORKSPACE_ID_QUERY_RE.search(stripped):
+        return Tag(tag_key="workspace_id", tag_value=match.group(1))
+
+    if match := _MONDAY_BOARD_ID_QUERY_RE.search(stripped):
+        return Tag(tag_key="board_id", tag_value=match.group(1))
+
+    if match := _MONDAY_BOARD_URL_RE.search(stripped):
+        return Tag(tag_key="board_id", tag_value=match.group(1))
+
+    if " " not in stripped and _MONDAY_BARE_NUMERIC_ID_RE.match(stripped):
+        return Tag(tag_key="workspace_id", tag_value=stripped)
+
+    return None
+
+
+def _detect_exact_lookup_tag(query: str) -> Tag | None:
+    return _detect_miro_identifier_tag(query) or _detect_monday_identifier_tag(query)
+
+
 def _run_single_search(
     query: str,
     filters: BaseFilters | None,
@@ -110,7 +148,7 @@ def _run_single_search(
     )
 
 
-# FORK: miro
+# FORK: miro / FORK: monday
 def _maybe_exact_lookup(
     request: SendSearchQueryRequest,
     document_index: DocumentIndex,
@@ -118,10 +156,9 @@ def _maybe_exact_lookup(
     db_session: Session,
 ) -> list[InferenceChunk] | None:
     """Exact-match fast path for identifier-shaped queries (Miro asset
-    filename / item id / full doc id). When the query is detected as an
-    identifier, runs a search scoped to an exact `Tag` filter on the
-    connector-indexed identifier metadata (see
-    onyx/connectors/miro/connector.py::_item_to_document), reusing the normal
+    filename / item id / full doc id; Monday workspace or board id). When the
+    query is detected as an identifier, runs a search scoped to an exact `Tag`
+    filter on the connector-indexed identifier metadata, reusing the normal
     `search_pipeline` so ACL, tenant scoping, and post-query censoring are
     unchanged.
 
@@ -130,7 +167,7 @@ def _maybe_exact_lookup(
     always falls through to normal hybrid search rather than showing no
     results for a mistyped identifier.
     """
-    tag = _detect_miro_identifier_tag(request.search_query)
+    tag = _detect_exact_lookup_tag(request.search_query)
     if tag is None:
         return None
 
@@ -173,7 +210,7 @@ def stream_search_query(
     original_query = request.search_query
     keyword_expansions: list[str] = []
 
-    # FORK: miro - exact-match fast path for identifier-shaped queries.
+    # FORK: miro / FORK: monday - exact-match fast path for identifier-shaped queries.
     # Skips query expansion entirely when matched, since expanding a pasted
     # filename/id into keyword queries would only reintroduce fuzzy matches.
     exact_chunks = _maybe_exact_lookup(request, document_index, user, db_session)

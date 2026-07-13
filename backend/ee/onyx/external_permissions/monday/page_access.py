@@ -6,8 +6,11 @@ from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
-_BOARD_ACCESS_QUERY = """
-query MondayBoardAccess($boardId: ID!) {
+_SUBSCRIBER_PAGE_LIMIT = 100
+_MAX_ACCESS_PAGES = 50
+
+_BOARD_ACCESS_PAGE_QUERY = """
+query MondayBoardAccess($boardId: ID!, $page: Int!) {
     boards(ids: [$boardId]) {
         id
         board_kind
@@ -18,13 +21,13 @@ query MondayBoardAccess($boardId: ID!) {
         subscribers {
             email
         }
-        team_owners(limit: 100, page: 1) {
+        team_owners(limit: 100, page: $page) {
             id
             users(limit: 100, page: 1) {
                 email
             }
         }
-        team_subscribers(limit: 100, page: 1) {
+        team_subscribers(limit: 100, page: $page) {
             id
             users(limit: 100, page: 1) {
                 email
@@ -33,13 +36,13 @@ query MondayBoardAccess($boardId: ID!) {
         workspace {
             id
             kind
-            users_subscribers(limit: 100, page: 1) {
+            users_subscribers(limit: 100, page: $page) {
                 email
             }
-            owners_subscribers(limit: 100, page: 1) {
+            owners_subscribers(limit: 100, page: $page) {
                 email
             }
-            teams_subscribers(limit: 100, page: 1) {
+            teams_subscribers(limit: 100, page: $page) {
                 id
                 users(limit: 100, page: 1) {
                     email
@@ -66,6 +69,61 @@ def _team_user_emails(teams: list[dict[str, Any]] | None) -> set[str]:
             if email := user.get("email"):
                 emails.add(email)
     return emails
+
+
+def _page_has_full_paginated_fields(board: dict[str, Any]) -> bool:
+    workspace = board.get("workspace") or {}
+    paginated_lists = [
+        board.get("team_owners") or [],
+        board.get("team_subscribers") or [],
+        workspace.get("users_subscribers") or [],
+        workspace.get("owners_subscribers") or [],
+        workspace.get("teams_subscribers") or [],
+    ]
+    return any(len(items) >= _SUBSCRIBER_PAGE_LIMIT for items in paginated_lists)
+
+
+def _merge_paginated_board_fields(
+    base: dict[str, Any], page_board: dict[str, Any]
+) -> None:
+    for field in ("team_owners", "team_subscribers"):
+        if items := page_board.get(field):
+            base.setdefault(field, []).extend(items)
+
+    base_workspace = base.setdefault("workspace", {})
+    page_workspace = page_board.get("workspace") or {}
+    for field in ("users_subscribers", "owners_subscribers", "teams_subscribers"):
+        if items := page_workspace.get(field):
+            base_workspace.setdefault(field, []).extend(items)
+
+
+def fetch_board_access_data(
+    run_query: Callable[[str, dict[str, Any] | None], dict[str, Any]],
+    board_id: str,
+) -> dict[str, Any] | None:
+    """Fetch board ACL payload with paginated subscriber fields merged."""
+    boards = run_query(_BOARD_ACCESS_PAGE_QUERY, {"boardId": board_id, "page": 1}).get(
+        "boards", []
+    )
+    if not boards:
+        return None
+
+    board_data = boards[0]
+    page = 2
+    while page <= _MAX_ACCESS_PAGES and _page_has_full_paginated_fields(board_data):
+        next_boards = run_query(
+            _BOARD_ACCESS_PAGE_QUERY, {"boardId": board_id, "page": page}
+        ).get("boards", [])
+        if not next_boards:
+            break
+
+        page_board = next_boards[0]
+        _merge_paginated_board_fields(board_data, page_board)
+        if not _page_has_full_paginated_fields(page_board):
+            break
+        page += 1
+
+    return board_data
 
 
 def build_external_access_from_board(
@@ -104,12 +162,18 @@ def build_external_access_from_board(
         if item:
             emails |= _user_emails(item.get("subscribers"))
 
-    if board_kind == "public" and workspace_kind == "closed":
+    # Closed workspaces: all board kinds inherit workspace membership, not
+    # only public boards (private/share boards in closed workspaces otherwise
+    # resolve to empty ACL).
+    if workspace_kind == "closed" and permissions != "owners":
         emails |= _user_emails(workspace.get("users_subscribers"))
         emails |= _user_emails(workspace.get("owners_subscribers"))
         emails |= _team_user_emails(workspace.get("teams_subscribers"))
 
-    if board_kind in {"private", "share"} and permissions != "owners":
+    if board_kind in {"private", "share"} and permissions not in {
+        "owners",
+        "assignee",
+    }:
         emails |= _user_emails(board.get("subscribers"))
         emails |= _team_user_emails(board.get("team_subscribers"))
 
@@ -143,10 +207,7 @@ def get_board_permissions(
     Team members are expanded to user emails inline (no separate group sync).
     """
     if board_data is None:
-        boards = run_query(_BOARD_ACCESS_QUERY, {"boardId": board_id}).get(
-            "boards", []
-        )
-        board_data = boards[0] if boards else None
+        board_data = fetch_board_access_data(run_query, board_id)
 
     if not board_data:
         logger.warning("Monday board %s was not returned by access query", board_id)

@@ -27,26 +27,27 @@ grep -rn "FORK:" backend/onyx web/src web/lib --include='*.py' --include='*.ts' 
 
 These exist only in the fork; upstream never touches them.
 
-| Path                                                             | Purpose                                                                        |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `backend/onyx/connectors/monday/__init__.py`                     | package marker                                                                 |
-| `backend/onyx/connectors/monday/client.py`                       | `MondayApiClient` SDK adapter                                                  |
-| `backend/onyx/connectors/monday/connector.py`                    | `MondayConnector` implementation                                               |
-| `backend/onyx/connectors/monday/README.md`                       | developer docs                                                                 |
-| `backend/onyx/connectors/fork_registry.py`                       | fork-only `FORK_CONNECTOR_CLASS_MAP`                                           |
-| `backend/tests/daily/connectors/monday/`                         | daily connector test                                                           |
-| `docs/connectors/monday.md`                                      | user-facing setup guide                                                        |
-| `web/lib/opal/src/logos/monday.tsx`                              | `SvgMonday` logo                                                               |
-| `backend/onyx/connectors/miro/__init__.py`                       | package marker                                                                 |
-| `backend/onyx/connectors/miro/connector.py`                      | `MiroConnector` implementation                                                 |
-| `backend/onyx/connectors/miro/README.md`                         | developer docs                                                                 |
-| `backend/tests/unit/onyx/connectors/miro/`                       | unit tests (frame-context + doc-conversion + type routing + filename recovery) |
-| `docs/connectors/miro.md`                                        | user-facing setup guide                                                        |
-| `web/lib/opal/src/logos/miro.tsx`                                | `SvgMiro` logo                                                                 |
-| `backend/tests/unit/onyx/db/test_user_file.py`                   | unit test for the `get_file_id_by_user_file_id` UUID guard                     |
-| `backend/tests/unit/ee/onyx/search/test_process_search_query.py` | unit test for `_detect_miro_identifier_tag`                                    |
-| `deployment/docker_compose/docker-compose.gpu.yml`               | NVIDIA GPU reservations for model servers (4090 / WSL2)                        |
-| `FORK_CHANGES.md`                                                | this manifest                                                                  |
+| Path                                                                    | Purpose                                                                        |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `backend/onyx/connectors/monday/__init__.py`                            | package marker                                                                 |
+| `backend/onyx/connectors/monday/client.py`                              | `MondayApiClient` SDK adapter                                                  |
+| `backend/onyx/connectors/monday/connector.py`                           | `MondayConnector` implementation                                               |
+| `backend/onyx/connectors/monday/README.md`                              | developer docs                                                                 |
+| `backend/onyx/connectors/fork_registry.py`                              | fork-only `FORK_CONNECTOR_CLASS_MAP`                                           |
+| `backend/tests/daily/connectors/monday/`                                | daily connector test                                                           |
+| `docs/connectors/monday.md`                                             | user-facing setup guide                                                        |
+| `web/lib/opal/src/logos/monday.tsx`                                     | `SvgMonday` logo                                                               |
+| `backend/onyx/connectors/miro/__init__.py`                              | package marker                                                                 |
+| `backend/onyx/connectors/miro/connector.py`                             | `MiroConnector` implementation                                                 |
+| `backend/onyx/connectors/miro/README.md`                                | developer docs                                                                 |
+| `backend/tests/unit/onyx/connectors/miro/`                              | unit tests (frame-context + doc-conversion + type routing + filename recovery) |
+| `docs/connectors/miro.md`                                               | user-facing setup guide                                                        |
+| `web/lib/opal/src/logos/miro.tsx`                                       | `SvgMiro` logo                                                                 |
+| `backend/tests/unit/onyx/db/test_user_file.py`                          | unit test for the `get_file_id_by_user_file_id` UUID guard                     |
+| `backend/tests/unit/ee/onyx/search/test_process_search_query.py`        | unit test for `_detect_miro_identifier_tag`                                    |
+| `backend/tests/unit/ee/onyx/search/test_monday_process_search_query.py` | unit test for `_detect_monday_identifier_tag`                                  |
+| `deployment/docker_compose/docker-compose.gpu.yml`                      | NVIDIA GPU reservations for model servers (4090 / WSL2)                        |
+| `FORK_CHANGES.md`                                                       | this manifest                                                                  |
 
 ## Shared-file edits (conflict-prone — re-apply after each sync)
 
@@ -65,6 +66,8 @@ Each row is one edit to an upstream-maintained file. All carry a `FORK:` marker 
 | `web/lib/opal/src/logos/index.ts`                                      | `export { default as SvgMonday } ...` (one marked line)                                                                             | ✅     |
 | `backend/tests/utils/secret_names.py`                                  | `MONDAY_API_TOKEN` in `TestSecret`                                                                                                  | ✅     |
 | `backend/onyx/connectors/cross_connector_utils/miscellaneous_utils.py` | `DocumentSource.MONDAY` in `_SOURCE_METADATA_KEYS_TO_IGNORE` (`workspace_id`, `board_id`) `# FORK: monday`                          | ✅     |
+| `backend/ee/onyx/external_permissions/monday/page_access.py`           | closed-workspace ACL merge for all board kinds + paginated subscriber fetch                                                         | ✅     |
+| `backend/ee/onyx/search/process_search_query.py`                       | `_detect_monday_identifier_tag` + `_detect_exact_lookup_tag` for workspace/board id Tag fast path `# FORK: monday`                  | ✅     |
 
 > **Why the registry is special:** instead of editing the `CONNECTOR_CLASS_MAP` dict body (which
 > upstream edits on every connector PR → guaranteed conflicts), the fork adds a single merge-hook

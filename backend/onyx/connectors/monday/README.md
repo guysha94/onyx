@@ -9,6 +9,13 @@ Indexes items (with column values, updates, and file references) from the
 Static API token via `credentials["monday_api_token"]` (sent as the `Authorization`
 header value).
 
+Required API scopes for **Auto Sync Permissions**:
+
+- `boards:read`
+- `workspaces:read`
+- `users:read` (required for subscriber emails in ACL)
+- `teams:read`
+
 ## Config kwargs
 
 | Kwarg           | Type                | Description                                              |
@@ -19,15 +26,15 @@ header value).
 
 ## Traversal
 
-Workspace-first discovery (like `tmp.py`):
+Workspace-first discovery:
 
-1. List workspaces (`workspaces.get_workspaces`) — all, or filtered by `workspace_ids`.
-2. For each workspace, page boards (`boards.fetch_boards` with `workspace_ids`).
-3. For each board, fetch items via custom GraphQL (`items_page` + `next_items_page`) so
-   full item fields (URL, updates, assets, creator) are available.
+1. Resolve workspace ids (all, filtered, or from board payloads).
+2. For each workspace, page boards via `_LIST_BOARDS_QUERY` (includes
+   `workspace { id name }` — required for closed workspaces missing from
+   `get_workspaces`).
+3. For each board, fetch items via custom GraphQL (`items_page` + `next_items_page`).
 
-When only `board_ids` is set, boards are fetched directly (with workspace metadata from
-the API) without iterating workspaces.
+When only `board_ids` is set, boards are fetched directly with workspace metadata.
 
 ## Searchable hierarchy metadata
 
@@ -39,7 +46,7 @@ Every indexed item document carries workspace/board context in:
 - `doc_metadata.hierarchy` — Postgres breadcrumbs only (not searchable).
 
 Opaque IDs (`workspace_id`, `board_id`) are excluded from the embedding metadata suffix
-but remain in `metadata` for exact Tag lookup.
+but remain in `metadata` for exact Tag lookup (see EE search fast path).
 
 Uses Monday.com API version `2025-10` (see `API-Version` header).
 
@@ -53,13 +60,26 @@ client-side.
 When **Document Access** is set to **Auto Sync Permissions** (`access_type=sync`):
 
 - Board-level ACL is resolved from Monday.com (`board_kind`, `permissions`,
-  owners, subscribers, workspace membership) and applied to every indexed item.
-- Team members on a board are expanded to user emails during sync.
-- A background doc-permission sync runs every ~30 minutes to refresh ACLs.
+  owners, subscribers, **closed-workspace** membership) and applied to every indexed item.
+- ACL is attached at **index time** (`Document.external_access`) and refreshed by
+  slim perm sync (~30 minutes).
+- Subscriber lists are paginated (100/page) so large teams are not truncated.
+- `validate_perm_sync` fails if the probe board resolves to an empty private ACL.
 
 Items inherit their parent board's permissions (same pattern as Jira project ACLs).
 
-Custom GraphQL for ACL (`_BOARD_ACCESS_QUERY`) is executed via `MondayApiClient.run_query`.
+ACL GraphQL is executed via `MondayApiClient.run_query` in
+`ee/onyx/external_permissions/monday/page_access.py`.
+
+## Deploy / reindex
+
+After connector or ACL changes:
+
+1. Restart Celery workers.
+2. Confirm API token scopes (especially `users:read`).
+3. Run permission sync and re-index the Monday connector.
+4. Verify OpenSearch hits have non-empty `access_control_list` (or `public: true`)
+   and `workspace_name` reflects the real workspace (e.g. `AI R&D`).
 
 ## Local smoke test
 
