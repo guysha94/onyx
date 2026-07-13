@@ -85,6 +85,8 @@ class SearchDocWithContent(SearchDoc):
                 secondary_owners=chunk.secondary_owners,
                 is_internet=is_internet,
                 content=section.combined_content if include_content else None,
+                image_file_id=chunk.image_file_id,  # FORK: miro
+                file_id=chunk.file_id,  # FORK: miro
             )
             for section in sections
         ]

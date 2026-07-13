@@ -11,6 +11,8 @@ import { ValidSources } from "@/lib/types";
 import { cn } from "@opal/utils";
 import Truncated from "@/refresh-components/texts/Truncated";
 import Text from "@/refresh-components/texts/Text";
+// FORK: miro
+import { buildImgUrl } from "@/app/app/components/files/images/utils";
 
 interface DocumentMetadataBlockProps {
   modal?: boolean;
@@ -26,7 +28,10 @@ function DocumentMetadataBlock({
 
   return (
     <div className="flex items-center overflow-hidden">
-      {document.updated_at && (
+      {/* FORK: miro - Miro's modifiedAt is a bulk-import timestamp shared
+          across many assets, not a meaningful per-asset update time, so
+          it's hidden here. */}
+      {document.updated_at && document.source_type !== ValidSources.Miro && (
         <DocumentUpdatedAtBadge updatedAt={document.updated_at} modal={modal} />
       )}
 
@@ -101,9 +106,25 @@ export default function ChatDocumentDisplay({
         <DocumentMetadataBlock modal={modal} document={document} />
       )}
 
-      <Text as="p" className="line-clamp-2 text-left" secondaryBody text03>
-        {buildDocumentSummaryDisplay(document.match_highlights, document.blurb)}
-      </Text>
+      {/* Thumbnail (e.g. Miro image assets) - FORK: miro. Falls back to
+          file_id when a text chunk (no image_file_id) is the top hit for an
+          image doc. */}
+      {(document.image_file_id ?? document.file_id) && (
+        <img
+          src={buildImgUrl((document.image_file_id ?? document.file_id) as string)}
+          alt={title}
+          loading="lazy"
+          className="w-full max-h-40 object-cover rounded-8 border border-border-01"
+        />
+      )}
+
+      {/* FORK: miro - Gemini captions power search but should not be
+          shown as a description to users. */}
+      {document.source_type !== ValidSources.Miro && (
+        <Text as="p" className="line-clamp-2 text-left" secondaryBody text03>
+          {buildDocumentSummaryDisplay(document.match_highlights, document.blurb)}
+        </Text>
+      )}
     </div>
   );
 }

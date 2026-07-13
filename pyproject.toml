@@ -26,6 +26,7 @@ dependencies = [
     "voyageai==0.2.3",
     "brotli>=1.2.0",
     "agent-client-protocol>=0.7.1",
+    "monday>=2.2.1",
 ]
 
 [dependency-groups]
@@ -169,6 +170,7 @@ dev = [
     "types-regex==2023.3.23.1",
     "types-requests==2.32.0.20250328",
     "types-setuptools==68.0.0.3",
+    "icecream>=2.2.0",
     { include-group = "zizmor" },
 ]
 

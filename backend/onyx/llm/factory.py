@@ -197,7 +197,7 @@ def get_llm_for_persona(
 
 
 def get_default_llm_with_vision(
-    timeout: int | None = None,
+    timeout: int | None = 60 * 3, # 3 minutes
     temperature: float | None = None,
     additional_headers: dict[str, str] | None = None,
 ) -> LLM | None:
@@ -207,6 +207,14 @@ def get_default_llm_with_vision(
 
     Returns None if no providers exist or if no provider supports images.
     """
+    # Clamp to a sane floor so slow vision providers aren't cut off; honor a
+    # larger explicit value when the caller passes one.
+    _vision_timeout_floor = 60 * 3
+    timeout = (
+        timeout
+        if timeout is not None and timeout > _vision_timeout_floor
+        else _vision_timeout_floor
+    )
 
     def create_vision_llm(provider: LLMProviderView, model: str) -> LLM:
         """Helper to create an LLM if the provider supports image input."""

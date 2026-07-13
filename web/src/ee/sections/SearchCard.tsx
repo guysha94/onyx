@@ -12,7 +12,10 @@ import { Section } from "@/layouts/general-layouts";
 import { Interactive } from "@opal/core";
 import Truncated from "@/refresh-components/texts/Truncated";
 import { timeAgo } from "@opal/time";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+// FORK: miro
+import { buildImgUrl } from "@/app/app/components/files/images/utils";
+import { AssetImageLightbox } from "@/ee/sections/AssetImageLightbox";
 
 export interface SearchResultCardProps {
   /** The search result document to display */
@@ -35,6 +38,10 @@ export default function SearchCard({
 }: SearchResultCardProps) {
   const isWebSource =
     document.is_internet || document.source_type === ValidSources.Web;
+
+  // FORK: miro - lightbox state for thumbnail click.
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const thumbnailFileId = document.image_file_id ?? document.file_id ?? null;
 
   function handleClick() {
     if (document.link) {
@@ -79,6 +86,37 @@ export default function SearchCard({
           {/* Body Row */}
           <div className="px-1 pb-1">
             <Section alignItems="start" gap={0.25}>
+              {/* Thumbnail (e.g. Miro image assets) - FORK: miro. Falls back
+                  to file_id when a text chunk (no image_file_id) is the top
+                  hit for an image doc. Clicking opens the lightbox. */}
+              {thumbnailFileId && (
+                <>
+                  <AssetImageLightbox
+                    fileId={thumbnailFileId}
+                    title={document.semantic_identifier}
+                    link={document.link}
+                    onTitleClick={() =>
+                      onDocumentClick({
+                        document_id: document.document_id,
+                        semantic_identifier: document.semantic_identifier,
+                      })
+                    }
+                    open={lightboxOpen}
+                    onOpenChange={setLightboxOpen}
+                  />
+                  <img
+                    src={buildImgUrl(thumbnailFileId)}
+                    alt={document.semantic_identifier}
+                    loading="lazy"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLightboxOpen(true);
+                    }}
+                    className="w-full max-h-40 object-cover rounded-8 border border-border-01 cursor-pointer"
+                  />
+                </>
+              )}
+
               {/* Metadata */}
               <Section flexDirection="row" justifyContent="start" gap={0.25}>
                 {(document.primary_owners ?? []).map((owner, index) => (
@@ -89,7 +127,11 @@ export default function SearchCard({
                     ? document.metadata.tags
                     : [document.metadata.tags]
                   ).map((tag, index) => <Chip key={index}>{tag}</Chip>)}
-                {document.updated_at &&
+                {/* FORK: miro - Miro's modifiedAt is a bulk-import
+                    timestamp shared across many assets, not a meaningful
+                    per-asset update time, so it's hidden here. */}
+                {document.source_type !== ValidSources.Miro &&
+                  document.updated_at &&
                   !isNaN(new Date(document.updated_at).getTime()) && (
                     <Text secondaryBody text02>
                       {timeAgo(document.updated_at)}
@@ -97,8 +139,10 @@ export default function SearchCard({
                   )}
               </Section>
 
-              {/* Blurb */}
-              {content && (
+              {/* Blurb - FORK: miro - Gemini captions are used for
+                  semantic search but should not be shown as a description
+                  to users. */}
+              {content && document.source_type !== ValidSources.Miro && (
                 <Text secondaryBody text03 className="text-left">
                   {content}
                 </Text>

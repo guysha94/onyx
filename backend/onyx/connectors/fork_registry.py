@@ -8,4 +8,8 @@ FORK_CONNECTOR_CLASS_MAP: dict[DocumentSource, ConnectorMapping] = {
         module_path="onyx.connectors.monday.connector",
         class_name="MondayConnector",
     ),
+    DocumentSource.MIRO: ConnectorMapping(
+        module_path="onyx.connectors.miro.connector",
+        class_name="MiroConnector",
+    ),
 }

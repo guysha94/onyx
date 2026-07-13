@@ -1028,6 +1028,28 @@ def update_docs_content_hash__no_commit(
         doc.content_hash = ids_to_new_hash[doc.id]
 
 
+# FORK: miro
+def update_docs_semantic_id__no_commit(
+    ids_to_new_semantic_id: dict[str, str],
+    db_session: Session,
+) -> None:
+    """Write image-derived titles back to Postgres.
+
+    Image-asset connectors (e.g. Miro) may have their title/semantic_identifier
+    upgraded to an LLM-generated caption title during image summarization, which
+    happens AFTER the initial document upsert. Without this write-back the search
+    index carries the good title but the Postgres row keeps the pre-caption
+    connector title, so Postgres-backed views show the stale value.
+    """
+    documents_to_update = (
+        db_session.query(DbDocument)
+        .filter(DbDocument.id.in_(ids_to_new_semantic_id.keys()))
+        .all()
+    )
+    for doc in documents_to_update:
+        doc.semantic_id = ids_to_new_semantic_id[doc.id]
+
+
 def mark_document_as_modified(
     document_id: str,
     db_session: Session,
