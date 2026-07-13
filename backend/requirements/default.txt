@@ -1560,6 +1560,10 @@ mitmproxy-rs==0.12.9 \
 mitmproxy-windows==0.12.9 ; os_name == 'nt' \
     --hash=sha256:fdec21fb66a5ba237d9106bfdc09d9428f315551bf4b41ba06b261e7beb56417
     # via mitmproxy-rs
+monday==2.2.1 \
+    --hash=sha256:d93177799f06bb798e7c3f2e5ce6028e82c70742229f80e51164436c464fb758 \
+    --hash=sha256:e33fda49b49b1dcf08ba5fab10ca533c206630a6019ebef705cbb44df5b4398e
+    # via onyx
 more-itertools==10.8.0 \
     --hash=sha256:52d4362373dcf7c52546bc4af9a86ee7c4579df9a8dc268be0a2f949d376cc9b \
     --hash=sha256:f638ddf8a1a0d134181275fb5d58b086ead7c6a72429ad725c67503f13ba30bd
@@ -3075,6 +3079,7 @@ urllib3==2.7.0 \
     #   htmldate
     #   hubspot-api-client
     #   kubernetes
+    #   monday
     #   opensearch-py
     #   pyairtable
     #   pygithub
