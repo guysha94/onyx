@@ -6,6 +6,9 @@ from uuid import uuid4
 from onyx.connectors.models import InputType
 from onyx.db.enums import AccessType
 from onyx.db.enums import ConnectorCredentialPairStatus
+from onyx.server.documents.models import BulkActionResponse
+from onyx.server.documents.models import BulkCCStatusUpdateRequest
+from onyx.server.documents.models import BulkDeletionRequest
 from onyx.server.documents.models import CCPairFullInfo
 from onyx.server.documents.models import ConnectorCredentialPairIdentifier
 from onyx.server.documents.models import ConnectorIndexingStatusLite
@@ -152,6 +155,35 @@ class CCPairManager:
             headers=user_performing_action.headers,
         )
         result.raise_for_status()
+
+    @staticmethod
+    def bulk_set_status(
+        source: DocumentSource,
+        status: ConnectorCredentialPairStatus,
+        user_performing_action: DATestUser,
+    ) -> BulkActionResponse:
+        body = BulkCCStatusUpdateRequest(source=source, status=status)
+        result = client.put(
+            url=f"{API_SERVER_URL}/manage/admin/cc-pair/bulk-status",
+            json=body.model_dump(mode="json"),
+            headers=user_performing_action.headers,
+        )
+        result.raise_for_status()
+        return BulkActionResponse(**result.json())
+
+    @staticmethod
+    def bulk_delete(
+        source: DocumentSource,
+        user_performing_action: DATestUser,
+    ) -> BulkActionResponse:
+        body = BulkDeletionRequest(source=source)
+        result = client.post(
+            url=f"{API_SERVER_URL}/manage/admin/bulk-deletion-attempt",
+            json=body.model_dump(mode="json"),
+            headers=user_performing_action.headers,
+        )
+        result.raise_for_status()
+        return BulkActionResponse(**result.json())
 
     @staticmethod
     def get_single(

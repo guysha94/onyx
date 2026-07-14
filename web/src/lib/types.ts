@@ -329,6 +329,31 @@ export interface ConnectorIndexingStatusLiteResponse {
   indexing_statuses: (ConnectorIndexingStatusLite | FederatedConnectorStatus)[];
 }
 
+export enum BulkActionOutcome {
+  SUCCEEDED = "SUCCEEDED",
+  SKIPPED = "SKIPPED",
+  REJECTED = "REJECTED",
+  WARNING = "WARNING",
+  FAILED = "FAILED",
+}
+
+export interface BulkActionItemResult {
+  cc_pair_id: number;
+  name: string;
+  outcome: BulkActionOutcome;
+  message: string | null;
+}
+
+export interface BulkActionResponse {
+  total: number;
+  succeeded: number;
+  skipped: number;
+  rejected: number;
+  warning: number;
+  failed: number;
+  results: BulkActionItemResult[];
+}
+
 export interface FederatedConnectorDetail {
   id: number;
   source: ValidSources.FederatedSlack;

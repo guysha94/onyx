@@ -26,9 +26,13 @@ from onyx.connectors.interfaces import Resolver
 from onyx.connectors.models import InputType
 from onyx.db.connector import delete_connector
 from onyx.db.connector_credential_pair import add_credential_to_connector
+from onyx.db.connector_credential_pair import bulk_set_cc_pair_status
 from onyx.db.connector_credential_pair import get_connector_credential_pair_for_user
 from onyx.db.connector_credential_pair import (
     get_connector_credential_pair_from_id_for_user,
+)
+from onyx.db.connector_credential_pair import (
+    get_connector_credential_pairs_for_user,
 )
 from onyx.db.connector_credential_pair import remove_credential_from_connector
 from onyx.db.connector_credential_pair import update_connector_credential_pair_from_id
@@ -68,6 +72,10 @@ from onyx.redis.redis_connector import RedisConnector
 from onyx.redis.redis_connector_utils import get_deletion_attempt_snapshot
 from onyx.redis.redis_pool import get_redis_client
 from onyx.redis.redis_tenant_work_gating import maybe_mark_tenant_active
+from onyx.server.documents.models import BulkActionItemResult
+from onyx.server.documents.models import BulkActionOutcome
+from onyx.server.documents.models import BulkActionResponse
+from onyx.server.documents.models import BulkCCStatusUpdateRequest
 from onyx.server.documents.models import CCPairFullInfo
 from onyx.server.documents.models import CCPairSyncAttemptsResponse
 from onyx.server.documents.models import CCPropertyUpdateRequest
@@ -532,6 +540,122 @@ def update_cc_pair_status(
     return JSONResponse(
         status_code=HTTPStatus.OK, content={"message": str(HTTPStatus.OK)}
     )
+
+
+@router.put("/admin/cc-pair/bulk-status", tags=PUBLIC_API_TAGS)
+def bulk_update_cc_pair_status(
+    bulk_request: BulkCCStatusUpdateRequest,
+    user: User = Depends(current_curator_or_admin_user),
+    db_session: Session = Depends(get_session),
+) -> BulkActionResponse:
+    """Pause or resume every editable connector for a single vendor (source)
+    in one set-based transaction, returning a per-connector outcome so partial
+    results are surfaced clearly.
+
+    Idempotent: a connector already in the requested status is SKIPPED, not
+    failed. Connectors being deleted are SKIPPED.
+    """
+    tenant_id = get_current_tenant_id()
+    target_status = bulk_request.status
+
+    cc_pairs = get_connector_credential_pairs_for_user(
+        db_session=db_session,
+        user=user,
+        get_editable=True,
+        source=bulk_request.source,
+        eager_load_connector=True,
+    )
+
+    results: list[BulkActionItemResult] = []
+    eligible_ids: list[int] = []
+    for cc_pair in cc_pairs:
+        if cc_pair.status == ConnectorCredentialPairStatus.DELETING:
+            results.append(
+                BulkActionItemResult(
+                    cc_pair_id=cc_pair.id,
+                    name=cc_pair.name,
+                    outcome=BulkActionOutcome.SKIPPED,
+                    message="Connector is being deleted",
+                )
+            )
+            continue
+        if cc_pair.status == target_status:
+            results.append(
+                BulkActionItemResult(
+                    cc_pair_id=cc_pair.id,
+                    name=cc_pair.name,
+                    outcome=BulkActionOutcome.SKIPPED,
+                    message="Already in requested status",
+                )
+            )
+            continue
+        eligible_ids.append(cc_pair.id)
+        results.append(
+            BulkActionItemResult(
+                cc_pair_id=cc_pair.id,
+                name=cc_pair.name,
+                outcome=BulkActionOutcome.SUCCEEDED,
+            )
+        )
+
+    if eligible_ids:
+        if target_status == ConnectorCredentialPairStatus.PAUSED:
+            for cc_pair_id in eligible_ids:
+                RedisConnector(tenant_id, cc_pair_id).stop.set_fence(True)
+
+            # Request cancellation for any active indexing attempts across the
+            # whole eligible set (one query rather than one per connector).
+            active_attempts = (
+                db_session.execute(
+                    select(IndexAttempt).where(
+                        IndexAttempt.connector_credential_pair_id.in_(eligible_ids),
+                        IndexAttempt.status.in_(
+                            [IndexingStatus.NOT_STARTED, IndexingStatus.IN_PROGRESS]
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for attempt in active_attempts:
+                try:
+                    IndexingCoordination.request_cancellation(db_session, attempt.id)
+                    if attempt.celery_task_id:
+                        client_app.control.revoke(attempt.celery_task_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to request cancellation for indexing attempt %s",
+                        attempt.id,
+                    )
+        else:
+            for cc_pair_id in eligible_ids:
+                RedisConnector(tenant_id, cc_pair_id).stop.set_fence(False)
+
+        bulk_set_cc_pair_status(
+            db_session=db_session,
+            cc_pair_ids=eligible_ids,
+            status=target_status,
+        )
+        db_session.commit()
+
+        for cc_pair_id in eligible_ids:
+            emit_audit_event(
+                AuditAction.CC_PAIR_UPDATE,
+                AuditOutcome.SUCCESS,
+                actor=actor_from_user(user),
+                resource_type="cc_pair",
+                resource_id=cc_pair_id,
+                extra={"status": target_status.value, "bulk": True},
+            )
+
+        # Speeds up the start of indexing after a resume.
+        client_app.send_task(
+            OnyxCeleryTask.CHECK_FOR_INDEXING,
+            kwargs=dict(tenant_id=tenant_id),
+            priority=OnyxCeleryPriority.HIGH,
+        )
+
+    return BulkActionResponse.from_results(results)
 
 
 @router.put("/admin/cc-pair/{cc_pair_id}/name")

@@ -72,6 +72,7 @@ function Main() {
     sourcePages,
     sourceLoadingStates,
     resetPagination,
+    refreshAllData,
   } = useConnectorIndexingStatusWithPagination(request, 30000, vectorDbEnabled);
 
   // Check if filters are active
@@ -202,6 +203,7 @@ function Main() {
           toggleSource={toggleSource}
           onPageChange={handlePageChange}
           sourceLoadingStates={sourceLoadingStates}
+          onActionComplete={refreshAllData}
         />
       )}
     </div>

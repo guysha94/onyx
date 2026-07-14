@@ -422,6 +422,25 @@ def update_connector_credential_pair_from_id(
     )
 
 
+def bulk_set_cc_pair_status(
+    db_session: Session,
+    cc_pair_ids: list[int],
+    status: ConnectorCredentialPairStatus,
+) -> None:
+    """Set-based status update for many cc_pairs in a single statement.
+
+    Does NOT commit; the caller owns the transaction so the status change can
+    be bundled with related writes (e.g. cancelling index attempts)."""
+    if not cc_pair_ids:
+        return
+
+    db_session.execute(
+        update(ConnectorCredentialPair)
+        .where(ConnectorCredentialPair.id.in_(cc_pair_ids))
+        .values(status=status)
+    )
+
+
 def update_connector_credential_pair(
     db_session: Session,
     connector_id: int,

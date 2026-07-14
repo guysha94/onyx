@@ -945,6 +945,37 @@ def cancel_indexing_attempts_for_ccpair(
     db_session.execute(stmt)
 
 
+def bulk_cancel_indexing_attempts_for_ccpairs(
+    cc_pair_ids: list[int],
+    db_session: Session,
+    include_secondary_index: bool = False,
+) -> None:
+    """Set-based variant of cancel_indexing_attempts_for_ccpair for many cc_pairs.
+
+    Does NOT commit; the caller owns the transaction."""
+    if not cc_pair_ids:
+        return
+
+    stmt = (
+        update(IndexAttempt)
+        .where(IndexAttempt.connector_credential_pair_id.in_(cc_pair_ids))
+        .where(IndexAttempt.status == IndexingStatus.NOT_STARTED)
+        .values(
+            status=IndexingStatus.CANCELED,
+            error_msg="Canceled by user",
+            time_started=datetime.now(timezone.utc),
+        )
+    )
+
+    if not include_secondary_index:
+        subquery = select(SearchSettings.id).where(
+            SearchSettings.status != IndexModelStatus.FUTURE
+        )
+        stmt = stmt.where(IndexAttempt.search_settings_id.in_(subquery))
+
+    db_session.execute(stmt)
+
+
 def cancel_indexing_attempts_past_model(
     db_session: Session,
 ) -> None:

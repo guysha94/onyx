@@ -693,6 +693,69 @@ class CCStatusUpdateRequest(BaseModel):
     status: ConnectorCredentialPairStatus
 
 
+class BulkActionOutcome(str, Enum):
+    """Per-connector outcome for a vendor-row bulk action. The distinct
+    non-success values are kept separate so the UI never conflates
+    "nothing happened, fix a precondition" with "it happened, minor cleanup
+    issue"."""
+
+    # Operation applied cleanly.
+    SUCCEEDED = "SUCCEEDED"
+    # No-op (e.g. already in the target status, or already DELETING).
+    SKIPPED = "SKIPPED"
+    # Precondition not met, so nothing was done and the connector is untouched
+    # (e.g. delete of a non-paused connector). Actionable by the user.
+    REJECTED = "REJECTED"
+    # Operation applied, but a non-fatal post-commit step failed (e.g. a
+    # File-source file-store delete). The connector is genuinely being deleted.
+    WARNING = "WARNING"
+    # A genuine, unexpected error.
+    FAILED = "FAILED"
+
+
+class BulkCCStatusUpdateRequest(BaseModel):
+    source: DocumentSource
+    status: ConnectorCredentialPairStatus
+
+
+class BulkDeletionRequest(BaseModel):
+    source: DocumentSource
+
+
+class BulkActionItemResult(BaseModel):
+    cc_pair_id: int
+    name: str
+    outcome: BulkActionOutcome
+    message: str | None = None
+
+
+class BulkActionResponse(BaseModel):
+    total: int
+    succeeded: int
+    skipped: int
+    rejected: int
+    warning: int
+    failed: int
+    results: list[BulkActionItemResult]
+
+    @classmethod
+    def from_results(
+        cls, results: list[BulkActionItemResult]
+    ) -> "BulkActionResponse":
+        def _count(outcome: BulkActionOutcome) -> int:
+            return sum(1 for r in results if r.outcome == outcome)
+
+        return cls(
+            total=len(results),
+            succeeded=_count(BulkActionOutcome.SUCCEEDED),
+            skipped=_count(BulkActionOutcome.SKIPPED),
+            rejected=_count(BulkActionOutcome.REJECTED),
+            warning=_count(BulkActionOutcome.WARNING),
+            failed=_count(BulkActionOutcome.FAILED),
+            results=results,
+        )
+
+
 class ConnectorCredentialPairDescriptor(BaseModel):
     id: int
     name: str

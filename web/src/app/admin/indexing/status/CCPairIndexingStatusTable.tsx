@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Table,
   TableRow,
@@ -16,6 +16,8 @@ import {
   SourceSummary,
   ConnectorIndexingStatusLite,
   FederatedConnectorStatus,
+  BulkActionOutcome,
+  BulkActionResponse,
 } from "@/lib/types";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -27,7 +29,7 @@ import {
   FiUnlock,
   FiRefreshCw,
 } from "react-icons/fi";
-import { Tooltip } from "@opal/components";
+import { Tooltip, Text } from "@opal/components";
 import { SourceIcon } from "@/components/SourceIcon";
 import { getSourceDisplayName } from "@/lib/sources";
 import { useTierAtLeast } from "@/hooks/useTierAtLeast";
@@ -36,7 +38,18 @@ import { ConnectorCredentialPairStatus } from "../../connector/[ccPairId]/types"
 import { PageSelector } from "@/components/PageSelector";
 import { ConnectorStaggeredSkeleton } from "./ConnectorRowSkeleton";
 import { Button } from "@opal/components";
-import { SvgSettings } from "@opal/icons";
+import {
+  SvgSettings,
+  SvgPauseCircle,
+  SvgPlayCircle,
+  SvgTrash,
+  SvgAlertTriangle,
+} from "@opal/icons";
+import { toast } from "@/hooks/useToast";
+import { bulkSetCCPairStatusForSource } from "@/lib/ccPair";
+import { bulkDeleteConnectorsForSource } from "@/lib/documentDeletion";
+import { ConfirmEntityModal } from "@/sections/modals/ConfirmEntityModal";
+import ConfirmationModalLayout from "@/refresh-components/layouts/ConfirmationModalLayout";
 
 // Helper to handle navigation with cmd/ctrl+click support
 // NOTE: using this rather than Next/Link (or similar) since shadcn
@@ -64,18 +77,144 @@ function isFederatedConnectorStatus(
 const NUMBER_OF_ROWS_PER_PAGE = 10;
 const NUMBER_OF_COLUMNS = 6;
 
+const OUTCOME_LABELS: Record<BulkActionOutcome, string> = {
+  [BulkActionOutcome.SUCCEEDED]: "Succeeded",
+  [BulkActionOutcome.SKIPPED]: "Skipped (no change needed)",
+  [BulkActionOutcome.REJECTED]: "Not done — pause the connector first",
+  [BulkActionOutcome.WARNING]: "Scheduled, but file cleanup had a problem",
+  [BulkActionOutcome.FAILED]: "Failed",
+};
+
+function BulkResultModal({
+  result,
+  onClose,
+}: {
+  result: BulkActionResponse;
+  onClose: () => void;
+}) {
+  // Only surface the outcomes the user needs to act on / be aware of.
+  const problemOutcomes: BulkActionOutcome[] = [
+    BulkActionOutcome.REJECTED,
+    BulkActionOutcome.WARNING,
+    BulkActionOutcome.FAILED,
+  ];
+
+  return (
+    <ConfirmationModalLayout
+      icon={SvgAlertTriangle}
+      title="Bulk action results"
+      onClose={onClose}
+      hideCancel
+      submit={<Button onClick={onClose}>Close</Button>}
+    >
+      <div className="flex flex-col gap-4">
+        <Text font="main-ui-body" color="text-03">
+          {`${result.succeeded} succeeded, ${result.skipped} skipped, ${result.rejected} need pausing, ${result.warning} with warnings, ${result.failed} failed.`}
+        </Text>
+        {problemOutcomes.map((outcome) => {
+          const items = result.results.filter((r) => r.outcome === outcome);
+          if (items.length === 0) return null;
+          return (
+            <div key={outcome} className="flex flex-col gap-1">
+              <Text font="main-ui-action" color="text-04">
+                {`${OUTCOME_LABELS[outcome]} (${items.length})`}
+              </Text>
+              <ul className="flex flex-col gap-1 pl-4 list-disc">
+                {items.map((item) => (
+                  <li key={item.cc_pair_id}>
+                    <Text font="main-ui-body" color="text-03">
+                      {item.message ? `${item.name} — ${item.message}` : item.name}
+                    </Text>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </ConfirmationModalLayout>
+  );
+}
+
 function SummaryRow({
   source,
   summary,
   isOpen,
   onToggle,
+  onActionComplete,
 }: {
   source: ValidSources;
   summary: SourceSummary;
   isOpen: boolean;
   onToggle: () => void;
+  onActionComplete?: () => void;
 }) {
   const businessTier = useTierAtLeast(Tier.BUSINESS);
+
+  const [actingType, setActingType] = useState<"status" | "delete" | null>(
+    null
+  );
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [resultDetails, setResultDetails] = useState<BulkActionResponse | null>(
+    null
+  );
+
+  const isActing = actingType !== null;
+  const anyActive = summary.active_connectors > 0;
+  const allPaused = summary.active_connectors === 0;
+  const hasConnectors = summary.total_connectors > 0;
+  const displayName = getSourceDisplayName(source);
+
+  function reportResult(result: BulkActionResponse, verb: string) {
+    const problems = result.rejected + result.warning + result.failed;
+    if (problems === 0) {
+      toast.success(
+        `${verb} ${result.succeeded} connector${
+          result.succeeded === 1 ? "" : "s"
+        }${result.skipped ? ` (${result.skipped} unchanged)` : ""}`
+      );
+    } else {
+      toast.error(
+        `${verb}: ${result.succeeded} succeeded, ${result.rejected} need pausing, ${result.warning} with warnings, ${result.failed} failed`
+      );
+      setResultDetails(result);
+    }
+    onActionComplete?.();
+  }
+
+  async function handleBulkStatus() {
+    const targetStatus = anyActive
+      ? ConnectorCredentialPairStatus.PAUSED
+      : ConnectorCredentialPairStatus.ACTIVE;
+    setActingType("status");
+    try {
+      const result = await bulkSetCCPairStatusForSource(source, targetStatus);
+      reportResult(result, anyActive ? "Paused" : "Resumed");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update connectors"
+      );
+    } finally {
+      setActingType(null);
+    }
+  }
+
+  async function handleBulkDelete() {
+    setShowDeleteModal(false);
+    setActingType("delete");
+    try {
+      const result = await bulkDeleteConnectorsForSource(source);
+      reportResult(result, "Scheduled deletion for");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to schedule connector deletions"
+      );
+    } finally {
+      setActingType(null);
+    }
+  }
 
   return (
     <TableRow
@@ -92,7 +231,7 @@ function SummaryRow({
             )}
           </div>
           <SourceIcon iconSize={20} sourceType={source} />
-          {getSourceDisplayName(source)}
+          {displayName}
         </div>
       </TableCell>
 
@@ -132,7 +271,60 @@ function SummaryRow({
         </div>
       </TableCell>
 
-      <TableCell />
+      <TableCell>
+        <div
+          className="flex items-center justify-end gap-x-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Button
+            prominence="secondary"
+            size="sm"
+            icon={anyActive ? SvgPauseCircle : SvgPlayCircle}
+            disabled={!hasConnectors || isActing}
+            onClick={handleBulkStatus}
+          >
+            {actingType === "status"
+              ? "Working\u2026"
+              : anyActive
+                ? "Pause All"
+                : "Resume All"}
+          </Button>
+          <Button
+            variant="danger"
+            prominence="secondary"
+            size="sm"
+            icon={SvgTrash}
+            disabled={!hasConnectors || !allPaused || isActing}
+            tooltip={
+              !allPaused ? "Pause all connectors before deleting" : undefined
+            }
+            onClick={() => setShowDeleteModal(true)}
+          >
+            {actingType === "delete" ? "Working\u2026" : "Delete All"}
+          </Button>
+
+          {showDeleteModal && (
+            <ConfirmEntityModal
+              danger
+              entityType="Connectors"
+              entityName={`${displayName} (${summary.total_connectors} connector${
+                summary.total_connectors === 1 ? "" : "s"
+              })`}
+              additionalDetails="This schedules a deletion job for every connector in this vendor, removing their indexed documents. This cannot be undone."
+              actionButtonText="Delete All"
+              onClose={() => setShowDeleteModal(false)}
+              onSubmit={handleBulkDelete}
+            />
+          )}
+
+          {resultDetails && (
+            <BulkResultModal
+              result={resultDetails}
+              onClose={() => setResultDetails(null)}
+            />
+          )}
+        </div>
+      </TableCell>
     </TableRow>
   );
 }
@@ -281,12 +473,14 @@ export function CCPairIndexingStatusTable({
   toggleSource,
   onPageChange,
   sourceLoadingStates = {} as Record<ValidSources, boolean>,
+  onActionComplete,
 }: {
   ccPairsIndexingStatuses: ConnectorIndexingStatusLiteResponse[];
   connectorsToggled: Record<ValidSources, boolean>;
   toggleSource: (source: ValidSources, toggled?: boolean | null) => void;
   onPageChange: (source: ValidSources, newPage: number) => void;
   sourceLoadingStates?: Record<ValidSources, boolean>;
+  onActionComplete?: () => void;
 }) {
   const businessTier = useTierAtLeast(Tier.BUSINESS);
 
@@ -329,6 +523,7 @@ export function CCPairIndexingStatusTable({
               summary={ccPairStatus.summary}
               isOpen={connectorsToggled[ccPairStatus.source] || false}
               onToggle={() => toggleSource(ccPairStatus.source)}
+              onActionComplete={onActionComplete}
             />
             {connectorsToggled[ccPairStatus.source] && (
               <>

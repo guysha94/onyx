@@ -1,5 +1,9 @@
 import { toast } from "@/hooks/useToast";
-import { DeletionAttemptSnapshot } from "./types";
+import {
+  BulkActionResponse,
+  DeletionAttemptSnapshot,
+  ValidSources,
+} from "./types";
 
 export async function scheduleDeletionJobForConnector(
   connectorId: number,
@@ -38,6 +42,30 @@ export async function deleteCCPair(
   }
   toast.success("Scheduled deletion of connector!");
   onCompletion?.();
+}
+
+// Schedule deletion for every eligible connector of a vendor (source) in one
+// call. Returns per-connector outcomes; throws only on a total request failure.
+export async function bulkDeleteConnectorsForSource(
+  source: ValidSources
+): Promise<BulkActionResponse> {
+  const response = await fetch(`/api/manage/admin/bulk-deletion-attempt`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ source }),
+  });
+
+  if (!response.ok) {
+    const detail = await response
+      .json()
+      .then((body) => body?.detail)
+      .catch(() => undefined);
+    throw new Error(detail || "Failed to schedule connector deletions");
+  }
+
+  return response.json();
 }
 
 export function isCurrentlyDeleting(
