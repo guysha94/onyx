@@ -405,6 +405,8 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - When fixing Docker build issues for web workspace packages, put fixes in the Dockerfile rather than changing `package.json` scripts (scripts must stay compatible with upstream/main for merging).
 - Miro/image assets must have meaningful per-asset titles (never placeholder filenames like `4.png`/`image.png`) and clear, highly informative vision captions (subject, style, colours, layout — who/what/where/when/how); store the image summary in `doc_summary` and vector it into both the title and content vectors.
 - Search mode should support filtering results by selected sources (default: all) and a configurable max-results limit; admin should support bulk pause/resume and bulk delete of connectors by vendor (Jira AI-94/AI-95/AI-96 under AI-61).
+- User performs git operations (add/commit/push/branch create-delete) themselves — provide the exact commands or commit message to run rather than executing state-mutating git commands, unless explicitly asked to run them.
+- Feature/fix branches for this repo are created from (and merged back into) the `prod` branch, not `main`.
 
 ## Learned Workspace Facts
 
@@ -416,7 +418,7 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
 - Document index is OpenSearch at `https://localhost:9200` (self-signed cert + basic-auth admin); active chunk index `danswer_chunk_nomic_ai_nomic_embed_text_v1` (nomic-embed-text-v1).
-- Two LLM providers: `ollama` and `gemini`/Vertex AI; `gemini-2.5-flash` is the default Miro vision model — avoid `llava:7b` (timeout/poor captions) and `gemma4:e2b-mlx` (Ollama crash on images).
+- Two LLM providers: `ollama` and `gemini`/Vertex AI; `gemini-2.5-flash` is the default Miro vision model — avoid `llava:7b` (timeout/poor captions), `gemma4:e2b-mlx` (Ollama crash on images), and `llama3.2-vision:11b` (Ollama llama-server crashes: "unknown model architecture: 'mllama'").
 - Web Docker builds for workspace packages (`lib/shared`, `lib/opal`) use `bun install --frozen-lockfile --ignore-scripts` followed by explicit `bun run build` per package.
 - Homelab connector automation lives under `scripts/` (bulk create/pause/delete); a Connector only appears in the admin UI after linking credentials via a CCPair.
 - `Document.content_hash` excludes LLM-generated summaries — changing prompt/vision model alone will skip re-index; clear content hashes then re-index to force re-captioning.

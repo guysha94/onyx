@@ -4,6 +4,7 @@ import { createContext, useContext } from "react";
 import { paidTierGated } from "@/ce";
 import { QueryControllerProvider as EEQueryControllerProvider } from "@/ee/providers/QueryControllerProvider";
 import { SearchDocWithContent, BaseFilters } from "@/lib/search/interfaces";
+import { ValidSources } from "@/lib/types";
 
 export type AppMode = "auto" | "search" | "chat";
 
@@ -25,6 +26,19 @@ export interface QueryControllerValue {
   llmSelectedDocIds: string[] | null;
   /** User-facing error message from the last search or classification request, null when idle */
   error: string | null;
+  /**
+   * Session-scoped Search-mode source selection. Empty array means "all sources".
+   * Persists across new queries within the same session; reset to empty on
+   * session change (see `reset`). This is the single source of truth for the
+   * selection — always read this, never track a separate copy in a component.
+   */
+  sourceFilter: ValidSources[];
+  /**
+   * The only way to change `sourceFilter`. Never set the underlying state
+   * directly — this keeps the in-render state and the synchronous ref used by
+   * `submit()` from ever desyncing.
+   */
+  applySourceFilter: (next: ValidSources[]) => void;
   /** Submit a query - routes to search or chat based on app mode */
   submit: (
     query: string,
@@ -43,6 +57,8 @@ export const QueryControllerContext = createContext<QueryControllerValue>({
   searchResults: [],
   llmSelectedDocIds: null,
   error: null,
+  sourceFilter: [],
+  applySourceFilter: () => undefined,
   submit: async (_q, onChat) => {
     onChat(_q);
   },

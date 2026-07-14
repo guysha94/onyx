@@ -13,6 +13,7 @@ import { useTierAtLeast } from "@/hooks/useTierAtLeast";
 import { Tier } from "@/lib/settings/types";
 import { useIsSearchModeAvailable } from "@/lib/settings/hooks";
 import { useUser } from "@/providers/UserProvider";
+import { ValidSources } from "@/lib/types";
 import {
   QueryControllerContext,
   QueryControllerValue,
@@ -81,6 +82,20 @@ export function QueryControllerProvider({
   );
   const [error, setError] = useState<string | null>(null);
 
+  // ── Search-mode source filter (session-scoped) ─────────────────────────
+  // `sourceFilter` is the canonical, render-visible selection. `sourceFilterRef`
+  // is a synchronous mirror used only so `submit()` (the bar-query path, which
+  // is called with no explicit filters) can read the *current* selection
+  // without waiting for a state update to flush. `applySourceFilter` is the
+  // ONLY place that writes either of them — never call `setSourceFilter`
+  // directly anywhere else, or the ref and state can desync.
+  const [sourceFilter, setSourceFilter] = useState<ValidSources[]>([]);
+  const sourceFilterRef = useRef<ValidSources[]>([]);
+  const applySourceFilter = useCallback((next: ValidSources[]) => {
+    sourceFilterRef.current = next;
+    setSourceFilter(next);
+  }, []);
+
   // Abort controllers for in-flight requests
   const classifyAbortRef = useRef<AbortController | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
@@ -97,11 +112,25 @@ export function QueryControllerProvider({
       const controller = new AbortController();
       searchAbortRef.current = controller;
 
+      // Scope resolution happens at the whole-object level, never by merging
+      // individual fields:
+      // - Refine path (caller passed a `filters` object, e.g. from SearchUI's
+      //   buildFilters()): use it verbatim, including `source_type: null` on
+      //   an explicit clear — that must actually clear the scope.
+      // - Bar-submit path (no `filters` object, i.e. a brand-new query typed
+      //   in the input bar): synthesize the scope from the current session
+      //   selection via the synchronous ref.
+      const effectiveFilters: BaseFilters =
+        filters ??
+        (sourceFilterRef.current.length > 0
+          ? { source_type: sourceFilterRef.current }
+          : { source_type: null });
+
       try {
         const response: SearchFullResponse = await searchDocuments(
           searchQuery,
           {
-            filters,
+            filters: effectiveFilters,
             numHits: 30,
             includeContent: false,
             signal: controller.signal,
@@ -280,7 +309,9 @@ export function QueryControllerProvider({
     setSearchResults([]);
     setLlmSelectedDocIds(null);
     setError(null);
-  }, []);
+    // New session (or first mount) always starts scoped to all sources.
+    applySourceFilter([]);
+  }, [applySourceFilter]);
 
   const value: QueryControllerValue = useMemo(
     () => ({
@@ -289,6 +320,8 @@ export function QueryControllerProvider({
       searchResults,
       llmSelectedDocIds,
       error,
+      sourceFilter,
+      applySourceFilter,
       submit,
       refineSearch,
       reset,
@@ -299,6 +332,8 @@ export function QueryControllerProvider({
       searchResults,
       llmSelectedDocIds,
       error,
+      sourceFilter,
+      applySourceFilter,
       submit,
       refineSearch,
       reset,

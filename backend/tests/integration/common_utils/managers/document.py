@@ -63,6 +63,7 @@ def _generate_dummy_document(
     cc_pair_id: int,
     content: str | None = None,
     extra_metadata: dict | None = None,
+    source: DocumentSource = DocumentSource.NOT_APPLICABLE,
 ) -> dict:
     text = content if content else f"This is test document {document_id}"
 
@@ -79,7 +80,7 @@ def _generate_dummy_document(
                     "link": f"{document_id}",
                 }
             ],
-            "source": DocumentSource.NOT_APPLICABLE,
+            "source": source,
             "metadata": metadata,
             "semantic_identifier": f"Test Document {document_id}",
             "from_ingestion_api": True,
@@ -136,6 +137,7 @@ class DocumentManager:
         api_key: DATestAPIKey,
         document_id: str | None = None,
         metadata: dict | None = None,
+        source: DocumentSource = DocumentSource.NOT_APPLICABLE,
     ) -> SimpleTestDocument:
         # Use provided document_ids if available, otherwise generate random UUIDs
         if document_id is None:
@@ -146,6 +148,7 @@ class DocumentManager:
             cc_pair.id,
             content,
             extra_metadata=metadata,
+            source=source,
         )
         response = client.post(
             f"{API_SERVER_URL}/onyx-api/ingestion",

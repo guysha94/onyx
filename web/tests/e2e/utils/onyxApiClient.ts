@@ -329,6 +329,99 @@ export class OnyxApiClient {
   }
 
   /**
+   * Creates a mock connector for an arbitrary source type (e.g. "jira",
+   * "github", "confluence"), paused immediately so no real indexing is
+   * attempted against the fake credential. Unlike `createFileConnector`,
+   * this makes the source type show up in the Search UI's Sources filter
+   * (which is populated from configured CC pairs), not just the ingested
+   * documents' `source` field.
+   *
+   * @param source - The `DocumentSource` value (e.g. "jira", "github")
+   * @param connectorName - Name for the connector
+   * @param accessType - Access type for the connector (defaults to "public")
+   * @returns The connector-credential pair ID (ccPairId)
+   * @throws Error if the connector creation fails
+   */
+  async createMockConnector(
+    source: string,
+    connectorName: string,
+    accessType: "public" | "private" = "public"
+  ): Promise<number> {
+    const response = await this.post(
+      "/manage/admin/connector-with-mock-credential",
+      {
+        name: connectorName,
+        source,
+        input_type: "load_state",
+        connector_specific_config: {},
+        refresh_freq: null,
+        prune_freq: null,
+        indexing_start: null,
+        access_type: accessType,
+        groups: [],
+      }
+    );
+
+    const responseData = await this.handleResponse<{ data: number }>(
+      response,
+      `Failed to create ${source} connector`
+    );
+
+    const ccPairId = responseData.data;
+    this.log(
+      `Created ${source} connector: ${connectorName} (CC Pair ID: ${ccPairId})`
+    );
+
+    // Pause the connector immediately to prevent indexing during tests
+    await this.pauseConnector(ccPairId);
+
+    return ccPairId;
+  }
+
+  /**
+   * Seeds a single document via the ingestion API, scoped to a specific
+   * CC pair, with an explicit `source` (independent of the CC pair's own
+   * connector source). Used to control search-result content/source
+   * precisely in tests.
+   *
+   * @param options.ccPairId - The CC pair to attach the document to
+   * @param options.documentId - Unique id for the document
+   * @param options.source - `DocumentSource` value for the document (e.g. "jira")
+   * @param options.semanticIdentifier - Display title shown in search results
+   * @param options.content - Body text indexed/searched for the document
+   * @returns The ingested document's id
+   */
+  async seedIngestionDocument(options: {
+    ccPairId: number;
+    documentId: string;
+    source: string;
+    semanticIdentifier: string;
+    content: string;
+  }): Promise<string> {
+    const response = await this.post("/onyx-api/ingestion", {
+      document: {
+        id: options.documentId,
+        sections: [{ text: options.content, link: options.documentId }],
+        source: options.source,
+        metadata: {},
+        semantic_identifier: options.semanticIdentifier,
+        from_ingestion_api: true,
+      },
+      cc_pair_id: options.ccPairId,
+    });
+
+    const data = await this.handleResponse<{ document_id: string }>(
+      response,
+      `Failed to seed ingestion document ${options.documentId}`
+    );
+
+    this.log(
+      `Seeded ingestion document ${options.documentId} (source=${options.source})`
+    );
+    return data.document_id;
+  }
+
+  /**
    * Pauses a connector-credential pair to prevent indexing.
    *
    * @param ccPairId - The connector-credential pair ID to pause

@@ -159,6 +159,7 @@ module.exports = {
         "**/src/refresh-pages/**/*.test.ts",
         "**/src/sections/**/*.test.ts",
         "**/src/components/**/*.test.ts",
+        "**/src/ee/**/*.test.ts",
         "**/lib/opal/**/*.test.ts",
         // Add more patterns here as you add more unit tests
       ],
@@ -178,6 +179,7 @@ module.exports = {
         "**/src/hooks/**/*.test.tsx",
         "**/src/sections/**/*.test.tsx",
         "**/src/views/**/*.test.tsx",
+        "**/src/ee/**/*.test.tsx",
         // Add more patterns here as you add more integration tests
       ],
     },

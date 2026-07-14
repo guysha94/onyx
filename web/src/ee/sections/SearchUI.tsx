@@ -11,7 +11,6 @@ import { Divider, Pagination } from "@opal/components";
 import { EmptyMessageCard } from "@opal/components";
 import { IllustrationContent } from "@opal/layouts";
 import SvgNoResult from "@opal/illustrations/no-result";
-import { getSourceMetadata } from "@/lib/sources";
 import { Tag, ValidSources } from "@/lib/types";
 import { getTimeFilterDate, TimeFilter } from "@opal/time";
 import useTags from "@/hooks/useTags";
@@ -19,7 +18,7 @@ import { SourceIcon } from "@/components/SourceIcon";
 import Text from "@/refresh-components/texts/Text";
 import { Section } from "@/layouts/general-layouts";
 import { Popover, PopoverMenu } from "@opal/components";
-import { SvgCheck, SvgClock, SvgTag, SvgSimpleLoader } from "@opal/icons";
+import { SvgCheck, SvgClock, SvgTag, SvgPlug, SvgSimpleLoader } from "@opal/icons";
 import { FilterButton } from "@opal/components";
 import { InputTypeIn } from "@opal/components";
 import useFilter from "@/hooks/useFilter";
@@ -35,6 +34,8 @@ import { toast } from "@/hooks/useToast";
 export interface SearchResultsProps {
   /** Callback when a document is clicked */
   onDocumentClick: (doc: MinimalOnyxDocument) => void;
+  /** All configured connector sources, used to populate the Sources filter */
+  sources: SourceMetadata[];
 }
 
 // ============================================================================
@@ -50,7 +51,10 @@ const TIME_FILTER_OPTIONS: { value: TimeFilter; label: string }[] = [
   { value: "year", label: "Past year" },
 ];
 
-export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
+export default function SearchUI({
+  onDocumentClick,
+  sources,
+}: SearchResultsProps) {
   // Available tags from backend
   const { tags: availableTags } = useTags();
   const {
@@ -58,6 +62,8 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
     searchResults: results,
     llmSelectedDocIds,
     error,
+    sourceFilter,
+    applySourceFilter,
     refineSearch: onRefineSearch,
   } = useQueryController();
 
@@ -72,11 +78,11 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
   }, [error]);
 
   // Filter state
-  const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [timeFilter, setTimeFilter] = useState<TimeFilter | null>(null);
   const [timeFilterOpen, setTimeFilterOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
+  const [sourceFilterOpen, setSourceFilterOpen] = useState(false);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -91,12 +97,31 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
     filtered: filteredTags,
   } = useFilter(availableTags, tagExtractor);
 
-  // Build the combined server-side filters from current state
+  const sourceExtractor = useCallback(
+    (source: SourceMetadata) => source.displayName,
+    []
+  );
+  const {
+    query: sourceQuery,
+    setQuery: setSourceQuery,
+    filtered: filteredSources,
+  } = useFilter(sources, sourceExtractor);
+
+  // Build the combined server-side filters from current state. Scope is
+  // resolved at the whole-object level: every call site passes the complete,
+  // explicit set of sources it wants applied (including `[]` for "all
+  // sources"), never relying on a partial merge with stale state.
   const buildFilters = (
-    overrides: { time?: TimeFilter | null; tags?: Tag[] } = {}
+    overrides: {
+      time?: TimeFilter | null;
+      tags?: Tag[];
+      sources?: ValidSources[];
+    } = {}
   ): BaseFilters => {
     const time = overrides.time !== undefined ? overrides.time : timeFilter;
     const tags = overrides.tags !== undefined ? overrides.tags : selectedTags;
+    const selectedSources =
+      overrides.sources !== undefined ? overrides.sources : sourceFilter;
     const cutoff = time ? getTimeFilterDate(time) : null;
     return {
       time_cutoff: cutoff?.toISOString() ?? null,
@@ -104,33 +129,22 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
         tags.length > 0
           ? tags.map((t) => ({ tag_key: t.tag_key, tag_value: t.tag_value }))
           : null,
+      source_type: selectedSources.length > 0 ? selectedSources : null,
     };
   };
 
-  // Reset source filter and pagination when results change
+  // Reset pagination when results change
   useEffect(() => {
-    setSelectedSources([]);
     setCurrentPage(1);
   }, [results]);
 
   // Create a set for fast lookup of LLM-selected docs
   const llmSelectedSet = new Set(llmSelectedDocIds ?? []);
 
-  // Filter and sort results
+  // Sort results: LLM-selected first, then by score. Source scoping is
+  // already applied server-side, so no client-side filtering here.
   const filteredAndSortedResults = useMemo(() => {
-    const filtered = results.filter((doc) => {
-      // Source filter (client-side)
-      if (selectedSources.length > 0) {
-        if (!doc.source_type || !selectedSources.includes(doc.source_type)) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-
-    // Sort: LLM-selected first, then by score
-    return filtered.sort((a, b) => {
+    return [...results].sort((a, b) => {
       const aSelected = llmSelectedSet.has(a.document_id);
       const bSelected = llmSelectedSet.has(b.document_id);
 
@@ -139,7 +153,7 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
 
       return (b.score ?? 0) - (a.score ?? 0);
     });
-  }, [results, selectedSources, llmSelectedSet]);
+  }, [results, llmSelectedSet]);
 
   // Pagination
   const totalPages = Math.max(
@@ -151,42 +165,32 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
     return filteredAndSortedResults.slice(start, start + RESULTS_PER_PAGE);
   }, [filteredAndSortedResults, currentPage]);
 
-  // Extract unique sources with metadata for the source filter
-  const sourcesWithMeta = useMemo(() => {
-    const sourceMap = new Map<
-      string,
-      { meta: SourceMetadata; count: number }
-    >();
-
+  // Count of results per source in the *current* result set, used to show
+  // "in current results" counts next to each source in the picker.
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<string, number>();
     for (const doc of results) {
       if (doc.source_type) {
-        const existing = sourceMap.get(doc.source_type);
-        if (existing) {
-          existing.count++;
-        } else {
-          sourceMap.set(doc.source_type, {
-            meta: getSourceMetadata(doc.source_type as ValidSources),
-            count: 1,
-          });
-        }
+        counts.set(doc.source_type, (counts.get(doc.source_type) ?? 0) + 1);
       }
     }
-
-    return Array.from(sourceMap.entries())
-      .map(([source, data]) => ({
-        source,
-        ...data,
-      }))
-      .sort((a, b) => b.count - a.count);
+    return counts;
   }, [results]);
 
-  const handleSourceToggle = (source: string) => {
+  const handleSourceToggle = (source: ValidSources) => {
+    const next = sourceFilter.includes(source)
+      ? sourceFilter.filter((s) => s !== source)
+      : [...sourceFilter, source];
+    applySourceFilter(next);
     setCurrentPage(1);
-    if (selectedSources.includes(source)) {
-      setSelectedSources(selectedSources.filter((s) => s !== source));
-    } else {
-      setSelectedSources([...selectedSources, source]);
-    }
+    onRefineSearch(buildFilters({ sources: next }));
+  };
+
+  const handleSourceClear = () => {
+    applySourceFilter([]);
+    setCurrentPage(1);
+    setSourceFilterOpen(false);
+    onRefineSearch(buildFilters({ sources: [] }));
   };
 
   const showEmpty = !error && results.length === 0;
@@ -306,6 +310,70 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
                 </PopoverMenu>
               </Popover.Content>
             </Popover>
+
+            {/* Source filter */}
+            <Popover open={sourceFilterOpen} onOpenChange={setSourceFilterOpen}>
+              <Popover.Trigger asChild>
+                <FilterButton
+                  icon={SvgPlug}
+                  active={sourceFilter.length > 0}
+                  onClear={handleSourceClear}
+                  data-testid="source-filter-trigger"
+                >
+                  {sourceFilter.length > 0
+                    ? `${sourceFilter.length} Source${
+                        sourceFilter.length > 1 ? "s" : ""
+                      }`
+                    : "Sources"}
+                </FilterButton>
+              </Popover.Trigger>
+              <Popover.Content align="start" width="lg">
+                <PopoverMenu>
+                  <LineItemButton
+                    onClick={handleSourceClear}
+                    state={sourceFilter.length === 0 ? "selected" : "empty"}
+                    icon={sourceFilter.length === 0 ? SvgCheck : SvgPlug}
+                    title="All Sources"
+                    sizePreset="main-ui"
+                    variant="section"
+                  />
+                  <Divider paddingParallel="fit" paddingPerpendicular="fit" />
+                  <InputTypeIn
+                    searchIcon
+                    placeholder="Filter sources..."
+                    value={sourceQuery}
+                    onChange={(e) => setSourceQuery(e.target.value)}
+                    clearButton
+                    variant="internal"
+                  />
+                  {filteredSources.map((source) => {
+                    const isSelected = sourceFilter.includes(
+                      source.internalName
+                    );
+                    const count = sourceCounts.get(source.internalName) ?? 0;
+                    return (
+                      <LineItemButton
+                        key={source.internalName}
+                        icon={(props) => (
+                          <SourceIcon
+                            sourceType={source.internalName}
+                            iconSize={16}
+                            {...props}
+                          />
+                        )}
+                        onClick={() => handleSourceToggle(source.internalName)}
+                        state={isSelected ? "selected" : "empty"}
+                        title={source.displayName}
+                        selectVariant="select-heavy"
+                        sizePreset="main-ui"
+                        variant="section"
+                        rightChildren={<Text text03>{count}</Text>}
+                      />
+                    );
+                  })}
+                </PopoverMenu>
+              </Popover.Content>
+            </Popover>
           </div>
 
           <Divider paddingParallel="fit" paddingPerpendicular="fit" />
@@ -324,70 +392,40 @@ export default function SearchUI({ onDocumentClick }: SearchResultsProps) {
         )}
       </div>
 
-      {/* ── Middle row: Results + Source filter ── */}
-      <div className="flex-1 min-h-0 flex flex-row gap-x-4">
-        <div
-          className={cn(
-            "min-h-0 overflow-y-scroll flex flex-col gap-2",
-            showEmpty ? "flex-1 justify-center" : "flex-3"
-          )}
-        >
-          {error ? (
-            <EmptyMessageCard
-              sizePreset="main-ui"
-              title="Search failed"
-              description={error}
-            />
-          ) : paginatedResults.length > 0 ? (
-            <>
-              {paginatedResults.map((doc) => (
-                <div
-                  key={`${doc.document_id}-${doc.chunk_ind}`}
-                  className="shrink-0"
-                >
-                  <SearchCard
-                    document={doc}
-                    isLlmSelected={llmSelectedSet.has(doc.document_id)}
-                    onDocumentClick={onDocumentClick}
-                  />
-                </div>
-              ))}
-            </>
-          ) : (
-            <IllustrationContent
-              illustration={SvgNoResult}
-              title="No results found"
-              description="Check your connectors/filters or try a different search term."
-            />
-          )}
-        </div>
-
-        {!showEmpty && (
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-1">
-            <Section gap={0.25} height="fit">
-              {sourcesWithMeta.map(({ source, meta, count }) => (
-                <LineItemButton
-                  key={source}
-                  icon={(props) => (
-                    <SourceIcon
-                      sourceType={source as ValidSources}
-                      iconSize={16}
-                      {...props}
-                    />
-                  )}
-                  onClick={() => handleSourceToggle(source)}
-                  state={
-                    selectedSources.includes(source) ? "selected" : "empty"
-                  }
-                  title={meta.displayName}
-                  selectVariant="select-heavy"
-                  sizePreset="main-ui"
-                  variant="section"
-                  rightChildren={<Text text03>{count}</Text>}
+      {/* ── Middle row: Results ── */}
+      <div
+        className={cn(
+          "flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2",
+          showEmpty && "justify-center"
+        )}
+      >
+        {error ? (
+          <EmptyMessageCard
+            sizePreset="main-ui"
+            title="Search failed"
+            description={error}
+          />
+        ) : paginatedResults.length > 0 ? (
+          <>
+            {paginatedResults.map((doc) => (
+              <div
+                key={`${doc.document_id}-${doc.chunk_ind}`}
+                className="shrink-0"
+              >
+                <SearchCard
+                  document={doc}
+                  isLlmSelected={llmSelectedSet.has(doc.document_id)}
+                  onDocumentClick={onDocumentClick}
                 />
-              ))}
-            </Section>
-          </div>
+              </div>
+            ))}
+          </>
+        ) : (
+          <IllustrationContent
+            illustration={SvgNoResult}
+            title="No results found"
+            description="Check your connectors/filters or try a different search term."
+          />
         )}
       </div>
 
