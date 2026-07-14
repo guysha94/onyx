@@ -89,6 +89,7 @@ function OpenAICompatibleModalInternals({
       <InputDivider />
       <ModelSelectionField
         shouldShowAutoUpdateToggle={false}
+        allowVisionOverride
         onRefetch={isFetchDisabled ? undefined : handleFetchModels}
       />
 

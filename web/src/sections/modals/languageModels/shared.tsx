@@ -481,8 +481,8 @@ function buildModelDescription(model: ModelConfiguration): string | undefined {
 }
 
 /** Eye marker for vision models, shown on the right of the picker row. */
-function modelRightChildren(model: ModelConfiguration): React.ReactNode {
-  if (!hasModelMetadata(model) || !model.supports_image_input) return undefined;
+function VisionMarker({ model }: { model: ModelConfiguration }) {
+  if (!model.supports_image_input) return null;
   return (
     <Text secondaryBody text03 title="Vision">
       👁
@@ -493,7 +493,9 @@ function modelRightChildren(model: ModelConfiguration): React.ReactNode {
 interface ModelRowProps {
   model: ModelConfiguration;
   isAutoMode: boolean;
+  allowVisionOverride?: boolean;
   onToggleVisibility: (visible: boolean) => void;
+  onToggleVision: (supportsImageInput: boolean) => void;
   onRename: (value: string | undefined) => void;
 }
 
@@ -513,7 +515,9 @@ interface ModelRowProps {
 function ModelRow({
   model,
   isAutoMode,
+  allowVisionOverride = false,
   onToggleVisibility,
+  onToggleVision,
   onRename,
 }: ModelRowProps) {
   const displayName =
@@ -524,6 +528,35 @@ function ModelRow({
   const toggleVisibility = isAutoMode
     ? undefined
     : () => onToggleVisibility(!model.is_visible);
+
+  const showVisionMarker =
+    model.supports_image_input &&
+    (allowVisionOverride || hasModelMetadata(model));
+
+  const rightChildren =
+    allowVisionOverride || showVisionMarker ? (
+      <div
+        className="flex items-center gap-2"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        {allowVisionOverride && (
+          <InputSelect
+            value={model.supports_image_input ? "text-image" : "text-only"}
+            onValueChange={(value) => onToggleVision(value === "text-image")}
+          >
+            <InputSelect.Trigger placeholder="Input type" />
+            <InputSelect.Content>
+              <InputSelect.Item value="text-only">Text Only</InputSelect.Item>
+              <InputSelect.Item value="text-image">
+                Text & Image
+              </InputSelect.Item>
+            </InputSelect.Content>
+          </InputSelect>
+        )}
+        {showVisionMarker && <VisionMarker model={model} />}
+      </div>
+    ) : undefined;
 
   return (
     <div data-model-name={model.name}>
@@ -553,7 +586,7 @@ function ModelRow({
               icon={() => <Checkbox checked={isSelected} />}
               title={displayName}
               description={buildModelDescription(model)}
-              rightChildren={modelRightChildren(model)}
+              rightChildren={rightChildren}
               editable
               onTitleChange={(newTitle) => onRename(newTitle || undefined)}
               padding="fit"
@@ -570,11 +603,18 @@ export interface ModelSelectionFieldProps {
   onRefetch?: (signal: AbortSignal) => Promise<void> | void;
   /** Called when the user adds a custom model by name. Enables the "Add Model" input. */
   onAddModel?: (modelName: string) => void;
+  /**
+   * When true, each model row exposes a Text Only / Text & Image control
+   * that updates `supports_image_input`. Opt-in for self-hosted providers
+   * whose vision capability cannot be inferred from the model name.
+   */
+  allowVisionOverride?: boolean;
 }
 export function ModelSelectionField({
   shouldShowAutoUpdateToggle,
   onRefetch,
   onAddModel,
+  allowVisionOverride = false,
 }: ModelSelectionFieldProps) {
   const formikProps = useFormikContext<BaseLLMFormValues>();
   const [newModelName, setNewModelName] = useState("");
@@ -606,6 +646,18 @@ export function ModelSelectionField({
   function setVisibility(modelName: string, visible: boolean) {
     const updated = models.map((m) =>
       m.name === modelName ? { ...m, is_visible: visible } : m
+    );
+    formikProps.setFieldValue("model_configurations", updated);
+  }
+
+  function setSupportsImageInput(
+    modelName: string,
+    supportsImageInput: boolean
+  ) {
+    const updated = models.map((m) =>
+      m.name === modelName
+        ? { ...m, supports_image_input: supportsImageInput }
+        : m
     );
     formikProps.setFieldValue("model_configurations", updated);
   }
@@ -688,8 +740,12 @@ export function ModelSelectionField({
                       key={model.name}
                       model={model}
                       isAutoMode={isAutoMode}
+                      allowVisionOverride={allowVisionOverride}
                       onToggleVisibility={(visible) =>
                         setVisibility(model.name, visible)
+                      }
+                      onToggleVision={(supportsImageInput) =>
+                        setSupportsImageInput(model.name, supportsImageInput)
                       }
                       onRename={(value) =>
                         setCustomDisplayName(model.name, value)

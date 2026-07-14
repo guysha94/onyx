@@ -44,15 +44,14 @@ from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-load_dotenv()
+
+load_dotenv(override=True)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONNECTORS_JSON = SCRIPT_DIR / "connectors.json"
 DEFAULT_DRIVES_MANIFEST = SCRIPT_DIR / "gdrive-shared-drives.json"
 
-BASE_URL = os.environ.get(
-    "ONYX_API_URL", ""
-)
+BASE_URL = os.environ.get("ONYX_API_URL", "")
 ONYX_PAT = os.environ.get("ONYX_PAT", "")
 CREDENTIAL_ID = int(os.environ.get("ONYX_CREDENTIAL_ID", "23"))
 GOOGLE_PRIMARY_ADMIN = os.environ.get("GOOGLE_PRIMARY_ADMIN", "")
@@ -69,6 +68,8 @@ DRIVE_SCOPES = [
 ]
 
 FOLDER_URL_TEMPLATE = "https://drive.google.com/drive/folders/{drive_id}"
+
+print(SERVICE_ACCOUNT_FILE)
 
 
 def extract_id_from_url(url_or_id: str) -> str:
