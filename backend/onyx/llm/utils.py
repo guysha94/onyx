@@ -28,6 +28,7 @@ from onyx.llm.interfaces import LLM
 from onyx.llm.interfaces import LLMUserIdentity
 from onyx.llm.model_response import ModelResponse
 from onyx.llm.models import UserMessage
+from onyx.llm.vision_support import infer_vision_support
 from onyx.prompts.contextual_retrieval import CONTEXTUAL_RAG_TOKEN_ESTIMATE
 from onyx.prompts.contextual_retrieval import DOCUMENT_SUMMARY_TOKEN_ESTIMATE
 from onyx.utils.logger import setup_logger
@@ -829,8 +830,12 @@ def model_supports_image_input(model_name: str, model_provider: str) -> bool:
             e,
         )
 
-    # Fallback to looking up the model in the litellm model_cost dict
-    return litellm_thinks_model_supports_image_input(model_name, model_provider)
+    # Fallback to LiteLLM, then name-heuristic inference for self-hosted
+    # multimodal IDs LiteLLM does not know (e.g. vLLM gemma4-e2b).
+    if litellm_thinks_model_supports_image_input(model_name, model_provider):
+        return True
+
+    return infer_vision_support(model_name)
 
 
 def litellm_thinks_model_supports_image_input(

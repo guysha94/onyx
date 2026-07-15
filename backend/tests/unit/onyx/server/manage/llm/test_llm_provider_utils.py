@@ -221,6 +221,22 @@ class TestInferVisionSupport:
         """Test Mistral doesn't have vision (not in known list)."""
         assert infer_vision_support("mistral.mistral-large") is False
 
+    def test_gemma4_e2b_has_vision(self) -> None:
+        """vLLM / OpenAI-compatible Gemma 4 multimodal IDs are vision-capable."""
+        assert infer_vision_support("gemma4-e2b") is True
+        assert infer_vision_support("gemma4:e2b") is True
+        assert infer_vision_support("google/gemma-4-9b") is True
+
+    def test_gemma3_has_vision(self) -> None:
+        """Gemma 3 family is natively multimodal."""
+        assert infer_vision_support("gemma3:12b") is True
+        assert infer_vision_support("gemma-3-4b-it") is True
+
+    def test_gemma2_no_vision(self) -> None:
+        """Older Gemma 2 text models should not match the Gemma 3/4 heuristic."""
+        assert infer_vision_support("gemma2:7b") is False
+        assert infer_vision_support("gemma-2-9b") is False
+
 
 class TestIsReasoningModel:
     """Tests for reasoning model detection."""
