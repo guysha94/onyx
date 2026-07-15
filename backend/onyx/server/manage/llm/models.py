@@ -17,6 +17,7 @@ from onyx.llm.utils import model_is_reasoning_model
 from onyx.server.manage.llm.utils import DYNAMIC_LLM_PROVIDERS
 from onyx.server.manage.llm.utils import extract_vendor_from_model_name
 from onyx.server.manage.llm.utils import filter_model_configurations
+from onyx.server.manage.llm.utils import infer_vision_support
 from onyx.server.manage.llm.utils import is_reasoning_model
 
 if TYPE_CHECKING:
@@ -258,13 +259,15 @@ class ModelConfigurationView(BaseModel):
                 is_visible=model_configuration_model.is_visible,
                 max_input_tokens=model_configuration_model.max_input_tokens,
                 # Dynamic/custom-config providers under-report vision; fall back
-                # to the LiteLLM cost map when no VISION flow is stored.
+                # to the LiteLLM cost map, then name-heuristic inference, when
+                # no VISION flow is stored (e.g. gemma4-e2b on vLLM).
                 supports_image_input=(
                     LLMModelFlowType.VISION
                     in model_configuration_model.llm_model_flow_types
                     or litellm_thinks_model_supports_image_input(
                         model_configuration_model.name, provider_name
                     )
+                    or infer_vision_support(model_configuration_model.name)
                 ),
                 # Prefer the stored REASONING flow; fall back to a substring
                 # heuristic on model name/display name for legacy rows that

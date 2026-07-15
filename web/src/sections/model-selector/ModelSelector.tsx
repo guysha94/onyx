@@ -84,8 +84,11 @@ export default function ModelSelector({
     return null;
   }, [value, llmProviders]);
 
-  // When no model is explicitly selected, fall back to showing the global default.
+  // When no model is explicitly selected, fall back to showing the global
+  // default — except for vision-only pickers, where the text default would
+  // incorrectly look like a selected Captioning LLM.
   const defaultModelOption = useMemo(() => {
+    if (requiresImageInput) return null;
     if (!defaultText || !llmProviders) return null;
     const provider = llmProviders.find((p) => p.id === defaultText.provider_id);
     const mc = provider?.model_configurations.find(
@@ -97,7 +100,7 @@ export default function ModelSelector({
       modelName: mc.name,
       displayName: mc.custom_display_name ?? mc.display_name ?? mc.name,
     };
-  }, [defaultText, llmProviders]);
+  }, [defaultText, llmProviders, requiresImageInput]);
 
   const effectiveOption = currentOption ?? defaultModelOption;
   const currentDisplayName = effectiveOption?.displayName ?? "Select Model";
