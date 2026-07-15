@@ -18,23 +18,24 @@ Required API scopes for **Auto Sync Permissions**:
 
 ## Config kwargs
 
-| Kwarg           | Type                | Description                                              |
-| --------------- | ------------------- | -------------------------------------------------------- |
-| `board_ids`     | `list[str] \| None` | Restrict indexing to specific board IDs                  |
-| `workspace_ids` | `list[str] \| None` | Restrict indexing to boards in specific workspaces       |
-| `batch_size`    | `int`               | Documents per yielded batch (default `INDEX_BATCH_SIZE`) |
+| Kwarg           | Type                | Description                                                                                                                                                                        |
+| --------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `board_ids`     | `list[str] \| None` | Restrict indexing to specific board IDs                                                                                                                                            |
+| `workspace_ids` | `list[str] \| None` | Restrict indexing to boards in specific workspaces. Empty/`None` = all boards via unfiltered `boards()` (not `get_workspaces`, which omits closed workspaces for many API tokens). |
+| `batch_size`    | `int`               | Documents per yielded batch (default `INDEX_BATCH_SIZE`)                                                                                                                           |
 
 ## Traversal
 
-Workspace-first discovery:
+Board discovery (see `_iter_board_contexts`):
 
-1. Resolve workspace ids (all, filtered, or from board payloads).
-2. For each workspace, page boards via `_LIST_BOARDS_QUERY` (includes
-   `workspace { id name }` — required for closed workspaces missing from
-   `get_workspaces`).
-3. For each board, fetch items via custom GraphQL (`items_page` + `next_items_page`).
-
-When only `board_ids` is set, boards are fetched directly with workspace metadata.
+1. **No filters** — paginate unfiltered `_LIST_ALL_BOARDS_QUERY`. Workspace
+   id/name come from each board payload. Do **not** use `get_workspaces` alone;
+   closed workspaces are often missing from that list for API tokens.
+2. **`workspace_ids` set** — for each workspace, page boards via
+   `_LIST_BOARDS_BY_WORKSPACE_QUERY` (optional `board_ids` intersection).
+3. **`board_ids` only** — fetch those boards via `_LIST_BOARDS_BY_IDS_QUERY`
+   (includes `workspace { id name }`).
+4. For each board, fetch items via custom GraphQL (`items_page` + `next_items_page`).
 
 ## Searchable hierarchy metadata
 

@@ -277,6 +277,49 @@ def test_iter_board_contexts_uses_board_workspace_name() -> None:
     assert contexts[0]["board_name"] == "General Tasks"
 
 
+def test_iter_board_contexts_empty_filters_uses_unfiltered_boards_query() -> None:
+    """Empty workspace/board filters must discover boards without get_workspaces.
+
+    Closed workspaces (e.g. AI R&D) are often missing from list_workspaces for
+    API tokens; unfiltered boards() still returns those boards with workspace
+    metadata on the payload.
+    """
+    from onyx.connectors.monday.connector import _LIST_ALL_BOARDS_QUERY
+
+    connector = MondayConnector()
+    connector.load_credentials({"monday_api_token": "token"})
+    connector._client = MagicMock()
+    connector._client.list_workspaces.return_value = []
+    connector._client.run_query.return_value = {
+        "boards": [
+            {
+                "id": "6302069973",
+                "name": "General Tasks",
+                "workspace": {"id": "5485895", "name": "AI R&D"},
+            },
+            {
+                "id": "99",
+                "name": "Other Board",
+                "workspace": {"id": "1", "name": "Open Workspace"},
+            },
+        ]
+    }
+
+    contexts = list(connector._iter_board_contexts())
+
+    assert len(contexts) == 2
+    assert contexts[0]["workspace_id"] == "5485895"
+    assert contexts[0]["workspace_name"] == "AI R&D"
+    assert contexts[0]["board_id"] == "6302069973"
+    assert contexts[1]["workspace_name"] == "Open Workspace"
+
+    connector._client.list_workspaces.assert_not_called()
+    connector._client.run_query.assert_called_once()
+    call_args = connector._client.run_query.call_args
+    assert call_args[0][0] == _LIST_ALL_BOARDS_QUERY
+    assert call_args[0][1] == {"boardsLimit": 50, "page": 1}
+
+
 def test_merge_board_workspace_context_overrides_fallback_name() -> None:
     from onyx.connectors.monday.connector import _merge_board_workspace_context
 

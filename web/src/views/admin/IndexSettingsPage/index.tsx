@@ -84,6 +84,7 @@ import {
   useSecondarySearchSettings,
 } from "@/lib/indexing/hooks";
 import { useLlmDefaults } from "@/lib/languageModels/hooks";
+import { refreshLlmProviderCaches } from "@/lib/languageModels/cache";
 import useFilter from "@/hooks/useFilter";
 import ModelSelector from "@/sections/model-selector/ModelSelector";
 import type { RichStr } from "@opal/types";
@@ -189,7 +190,7 @@ interface ProviderGroupProps {
    */
   onSelectModel: (
     modelName: string,
-    customModel?: EmbeddingModelRequest
+    customModel?: EmbeddingModelRequest,
   ) => void;
   onDeselectModel: () => void;
 }
@@ -213,7 +214,7 @@ function ProviderGroup({
   const [pendingConnectModel, setPendingConnectModel] =
     useState<EmbeddingModel | null>(null);
   const providerGroupContainsCurrentModelName = models.some(
-    (m) => m.modelName === currentModelName
+    (m) => m.modelName === currentModelName,
   );
 
   const handleDisconnect = useCallback(async () => {
@@ -242,7 +243,7 @@ function ProviderGroup({
       if (model.modelName === currentModelName) return "current";
       return "connected";
     },
-    [isCloud, isConfigured, selectedModelName, currentModelName]
+    [isCloud, isConfigured, selectedModelName, currentModelName],
   );
 
   const handleModelSelect = useCallback(
@@ -271,7 +272,7 @@ function ProviderGroup({
       provider.deprecated,
       isCloud,
       setPendingConnectModel,
-    ]
+    ],
   );
 
   return (
@@ -290,7 +291,7 @@ function ProviderGroup({
             >
               <Text font="main-ui-body" color="text-03" as="p">
                 {markdown(
-                  `This will disconnect all embedding models from provider **${provider.displayName}**.`
+                  `This will disconnect all embedding models from provider **${provider.displayName}**.`,
                 )}
               </Text>
             </ConfirmationModalLayout>
@@ -351,7 +352,7 @@ function ProviderGroup({
                 title={
                   provider.docsLink
                     ? markdown(
-                        `[${provider.displayName}](${provider.docsLink})`
+                        `[${provider.displayName}](${provider.docsLink})`,
                       )
                     : provider.displayName
                 }
@@ -577,12 +578,12 @@ export default function IndexSettingsPage() {
   const [viewAllModelsOpen, setViewAllModelsOpen] = useState(false);
   const [activeModelTab, setActiveModelTab] = useState(MODEL_TAB_CLOUD);
   const [switchoverType, setSwitchoverType] = useState<SwitchoverType>(
-    SwitchoverType.REINDEX
+    SwitchoverType.REINDEX,
   );
 
   const allModels = useMemo(
     () => [...CLOUD_BASED_PROVIDERS, ...SELF_HOSTED_PROVIDERS],
-    []
+    [],
   );
 
   const {
@@ -594,7 +595,7 @@ export default function IndexSettingsPage() {
     (embeddingProvider) =>
       `${embeddingProvider.displayName} ${embeddingProvider.embeddingModels
         .map((embeddingModel) => embeddingModel.modelName)
-        .join(" ")}`
+        .join(" ")}`,
   );
 
   const { filteredCloudProviders, filteredSelfHostedProviders } =
@@ -602,10 +603,10 @@ export default function IndexSettingsPage() {
       const matched = new Set(filteredProviders);
       return {
         filteredCloudProviders: CLOUD_BASED_PROVIDERS.filter((p) =>
-          matched.has(p)
+          matched.has(p),
         ),
         filteredSelfHostedProviders: SELF_HOSTED_PROVIDERS.filter((p) =>
-          matched.has(p)
+          matched.has(p),
         ),
       };
     }, [filteredProviders]);
@@ -623,7 +624,7 @@ export default function IndexSettingsPage() {
         toast.error("Failed to update settings");
       }
     },
-    [settings, router]
+    [settings, router],
   );
 
   const imageProcessingEnabled =
@@ -667,7 +668,7 @@ export default function IndexSettingsPage() {
   const currentProviderName = currentEmbeddingModel
     ? resolveProviderName(
         currentEmbeddingModel.model_name,
-        currentEmbeddingModel.provider_type
+        currentEmbeddingModel.provider_type,
       )
     : null;
   const currentProvider = currentProviderName
@@ -683,7 +684,7 @@ export default function IndexSettingsPage() {
   const configuredProviders = useMemo(
     () =>
       new Map((configuredProvidersList ?? []).map((p) => [p.provider_type, p])),
-    [configuredProvidersList]
+    [configuredProvidersList],
   );
   const cancelReindexModal = useCreateModal();
   const customModelModal = useCreateModal();
@@ -707,12 +708,29 @@ export default function IndexSettingsPage() {
   const handleCaptioningModelChange = useCallback(
     async ({
       modelName,
-      providerName,
+      provider: providerType,
+      name,
+      modelConfigurationId,
     }: {
       modelName: string;
-      providerName: string | null;
+      provider: string;
+      name: string;
+      modelConfigurationId?: number | null;
     }) => {
-      const provider = llmProviders?.find((p) => p.name === providerName);
+      // Match LanguageModelsPage: instance `name` is optional (null for many
+      // Vertex/Gemini setups), so resolve by model_configuration_id first,
+      // then provider type + name (treating null/"" as equivalent).
+      const provider =
+        (modelConfigurationId != null
+          ? llmProviders?.find((p) =>
+              p.model_configurations.some((m) => m.id === modelConfigurationId),
+            )
+          : undefined) ??
+        llmProviders?.find(
+          (p) =>
+            p.provider === providerType &&
+            (p.name === name || (!p.name && !name)),
+        );
       if (!provider) {
         toast.error("Could not resolve provider");
         return;
@@ -728,31 +746,30 @@ export default function IndexSettingsPage() {
         });
         if (!response.ok) {
           throw new Error(
-            (await response.json()).detail ?? "Failed to update captioning LLM"
+            (await response.json()).detail ?? "Failed to update captioning LLM",
           );
         }
-        await mutate(SWR_KEYS.llmProviders);
+        await refreshLlmProviderCaches(mutate);
         toast.success("Captioning LLM updated");
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "An unknown error occurred"
+          error instanceof Error ? error.message : "An unknown error occurred",
         );
       }
     },
-    [llmProviders]
+    [llmProviders],
   );
 
-  // Resolve defaultVision (name-based) to a model_configuration_id for ModelSelector
+  // Resolve defaultVision to a model_configuration_id for ModelSelector.
   const captioningModelConfigId = useMemo(() => {
     if (!defaultVision?.modelName || !llmProviders) return null;
-    for (const p of llmProviders) {
-      if (p.name !== defaultVision.providerName) continue;
-      const mc = p.model_configurations.find(
-        (m) => m.name === defaultVision.modelName
-      );
-      if (mc?.id != null) return mc.id;
-    }
-    return null;
+    const provider = llmProviders.find(
+      (p) => p.id === defaultVision.providerId,
+    );
+    const mc = provider?.model_configurations.find(
+      (m) => m.name === defaultVision.modelName,
+    );
+    return mc?.id ?? null;
   }, [llmProviders, defaultVision]);
 
   const initialFormValues: IndexSettingsFormValues = useMemo(
@@ -764,7 +781,7 @@ export default function IndexSettingsPage() {
       contextual_rag_model_configuration_id:
         searchSettings?.contextual_rag_model_configuration_id ?? null,
     }),
-    [currentEmbeddingModel, searchSettings]
+    [currentEmbeddingModel, searchSettings],
   );
 
   const handleCancelReindex = useCallback(async () => {
@@ -804,7 +821,7 @@ export default function IndexSettingsPage() {
           <ProviderCredentialsModal
             provider={currentProvider}
             existingCredentials={configuredProviders?.get(
-              currentProvider.providerName
+              currentProvider.providerName,
             )}
             existingModel={currentEmbeddingModelSpec ?? undefined}
             onSubmit={async () => {
@@ -852,7 +869,7 @@ export default function IndexSettingsPage() {
                 values.contextual_rag_model_configuration_id === null
               ) {
                 toast.error(
-                  "Select a Contextual Retrieval LLM before re-indexing."
+                  "Select a Contextual Retrieval LLM before re-indexing.",
                 );
                 return;
               }
@@ -924,7 +941,7 @@ export default function IndexSettingsPage() {
                         if (customModel) {
                           void setFieldValue(
                             "model_name",
-                            customModel.modelName
+                            customModel.modelName,
                           );
                           void setFieldValue("custom_model", customModel);
                           // Self-hosted custom models resolve to CUSTOM by
@@ -942,7 +959,7 @@ export default function IndexSettingsPage() {
                       headerPadding="sm"
                       title="Re-indexing in progress"
                       description={markdown(
-                        `Switching to **${secondarySearchSettings?.model_name}**. Existing documents are being re-embedded — this may take hours or days depending on corpus size. The previous model continues to serve queries until the switchover completes.`
+                        `Switching to **${secondarySearchSettings?.model_name}**. Existing documents are being re-embedded — this may take hours or days depending on corpus size. The previous model continues to serve queries until the switchover completes.`,
                       )}
                       bottomChildren={
                         <GeneralLayouts.Section
@@ -982,7 +999,7 @@ export default function IndexSettingsPage() {
                         description={markdown(
                           contextualRagModelMissing
                             ? "Contextual Retrieval is enabled but no model is selected. Pick a Contextual Retrieval LLM below before re-indexing — without one, the re-index cannot run."
-                            : "Modifying embedding or retrieval settings requires a full re-index of all documents to take effect, which may take **hours or days** depending on corpus size. [Learn More](https://docs.onyx.app/security/architecture/data_flows)"
+                            : "Modifying embedding or retrieval settings requires a full re-index of all documents to take effect, which may take **hours or days** depending on corpus size. [Learn More](https://docs.onyx.app/security/architecture/data_flows)",
                         )}
                         bottomChildren={
                           dirty ? (
@@ -1114,7 +1131,7 @@ export default function IndexSettingsPage() {
                                               }
                                               isCloud
                                               existingCredentials={configuredProviders?.get(
-                                                provider.providerName
+                                                provider.providerName,
                                               )}
                                               existingModel={
                                                 currentEmbeddingModel?.provider_type ===
@@ -1125,15 +1142,15 @@ export default function IndexSettingsPage() {
                                               }
                                               onSelectModel={(
                                                 name,
-                                                customModel
+                                                customModel,
                                               ) => {
                                                 void setFieldValue(
                                                   "model_name",
-                                                  name
+                                                  name,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model",
-                                                  customModel ?? null
+                                                  customModel ?? null,
                                                 );
                                                 // Bind a just-defined LiteLLM /
                                                 // Azure model to its provider so
@@ -1142,25 +1159,25 @@ export default function IndexSettingsPage() {
                                                   "custom_model_provider",
                                                   customModel
                                                     ? provider.providerName
-                                                    : null
+                                                    : null,
                                                 );
                                               }}
                                               onDeselectModel={() => {
                                                 void setFieldValue(
                                                   "model_name",
-                                                  initialFormValues.model_name
+                                                  initialFormValues.model_name,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model",
-                                                  null
+                                                  null,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model_provider",
-                                                  null
+                                                  null,
                                                 );
                                               }}
                                             />
-                                          )
+                                          ),
                                         )}
                                       </GeneralLayouts.Section>
                                     ) : (
@@ -1192,33 +1209,33 @@ export default function IndexSettingsPage() {
                                               onSelectModel={(name) => {
                                                 void setFieldValue(
                                                   "model_name",
-                                                  name
+                                                  name,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model",
-                                                  null
+                                                  null,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model_provider",
-                                                  null
+                                                  null,
                                                 );
                                               }}
                                               onDeselectModel={() => {
                                                 void setFieldValue(
                                                   "model_name",
-                                                  initialFormValues.model_name
+                                                  initialFormValues.model_name,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model",
-                                                  null
+                                                  null,
                                                 );
                                                 void setFieldValue(
                                                   "custom_model_provider",
-                                                  null
+                                                  null,
                                                 );
                                               }}
                                             />
-                                          )
+                                          ),
                                         )}
 
                                         <GeneralLayouts.Section gap={0.25}>
@@ -1261,7 +1278,7 @@ export default function IndexSettingsPage() {
                                                   rightIcon={SvgPlusCircle}
                                                   onClick={() =>
                                                     customModelModal.toggle(
-                                                      true
+                                                      true,
                                                     )
                                                   }
                                                 >
@@ -1303,15 +1320,15 @@ export default function IndexSettingsPage() {
                                           onClick={() => {
                                             void setFieldValue(
                                               "model_name",
-                                              initialFormValues.model_name
+                                              initialFormValues.model_name,
                                             );
                                             void setFieldValue(
                                               "custom_model",
-                                              null
+                                              null,
                                             );
                                             void setFieldValue(
                                               "custom_model_provider",
-                                              null
+                                              null,
                                             );
                                           }}
                                         />
@@ -1351,7 +1368,7 @@ export default function IndexSettingsPage() {
                                       title={currentEmbeddingModel.model_name}
                                       description={
                                         findRegistryModel(
-                                          currentEmbeddingModel.model_name
+                                          currentEmbeddingModel.model_name,
                                         )?.description
                                       }
                                       sizePreset="main-ui"
@@ -1375,8 +1392,8 @@ export default function IndexSettingsPage() {
                                           SELF_HOSTED_PROVIDERS.some((p) =>
                                             p.embeddingModels.some(
                                               (m) =>
-                                                m.modelName === stagedModelName
-                                            )
+                                                m.modelName === stagedModelName,
+                                            ),
                                           );
                                         setActiveModelTab(
                                           isStagedSelfHosted
@@ -1385,7 +1402,7 @@ export default function IndexSettingsPage() {
                                               ? MODEL_TAB_CLOUD
                                               : currentEmbeddingModel?.provider_type
                                                 ? MODEL_TAB_CLOUD
-                                                : MODEL_TAB_SELF
+                                                : MODEL_TAB_SELF,
                                         );
                                         setViewAllModelsOpen(true);
                                       }}
@@ -1459,7 +1476,7 @@ export default function IndexSettingsPage() {
                           ? "Cancel the in-progress re-index to change retrieval settings."
                           : !hasAnyLlm
                             ? markdown(
-                                "Contextual Retrieval is disabled because you have no models configured. Set up a [Language Model](/admin/configuration/language-models) first."
+                                "Contextual Retrieval is disabled because you have no models configured. Set up a [Language Model](/admin/configuration/language-models) first.",
                               )
                             : undefined
                       }
@@ -1499,7 +1516,7 @@ export default function IndexSettingsPage() {
                                 onChange={(opt) =>
                                   void setFieldValue(
                                     "contextual_rag_model_configuration_id",
-                                    opt.modelConfigurationId ?? null
+                                    opt.modelConfigurationId ?? null,
                                   )
                                 }
                               />
@@ -1531,7 +1548,7 @@ export default function IndexSettingsPage() {
                       tooltip={
                         !hasAnyVisionLlm
                           ? markdown(
-                              "Image Processing is disabled because you have no vision-capable models configured. Set up a vision-capable [Language Model](/admin/configuration/language-models) first."
+                              "Image Processing is disabled because you have no vision-capable models configured. Set up a vision-capable [Language Model](/admin/configuration/language-models) first.",
                             )
                           : undefined
                       }
@@ -1574,7 +1591,10 @@ export default function IndexSettingsPage() {
                                 onChange={(opt) =>
                                   void handleCaptioningModelChange({
                                     modelName: opt.modelName,
-                                    providerName: opt.name,
+                                    provider: opt.provider,
+                                    name: opt.name,
+                                    modelConfigurationId:
+                                      opt.modelConfigurationId,
                                   })
                                 }
                               />
@@ -1594,13 +1614,13 @@ export default function IndexSettingsPage() {
                             >
                               <InputSelect
                                 value={String(
-                                  settings.image_analysis_max_size_mb ?? 20
+                                  settings.image_analysis_max_size_mb ?? 20,
                                 )}
                                 onValueChange={(value) => {
                                   void saveSettings({
                                     image_analysis_max_size_mb: parseInt(
                                       value,
-                                      10
+                                      10,
                                     ),
                                   });
                                 }}
