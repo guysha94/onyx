@@ -4,10 +4,16 @@ Covers the team-based ACL logic on the connector: board sharing-policy ->
 ExternalAccess, the team-member -> email id-space join, and slim-doc perm sync.
 All Miro API access is mocked, so these are pure unit tests.
 """
+from collections.abc import Iterator
 from typing import Any
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
+
 from onyx.access.models import ExternalAccess
+from onyx.connectors.exceptions import InsufficientPermissionsError
+from onyx.connectors.miro.connector import BoardAccessForbiddenError
 from onyx.connectors.miro.connector import MiroConnector
 from onyx.connectors.miro.connector import team_group_id
 
@@ -132,3 +138,113 @@ def test_retrieve_all_slim_docs_perm_sync_maps_board_access() -> None:
         team_group_id("t1")
     }
     assert docs["miro__b2__i4"].external_access == ExternalAccess.empty()
+
+
+# ------------------------------------------------------------------ #
+# Resilience: private-board skip (FORK: miro)
+# ------------------------------------------------------------------ #
+
+
+def test_perm_sync_skips_private_board_on_403_6108() -> None:
+    """A board that raises BoardAccessForbiddenError is skipped; the run completes."""
+    connector = _connector()
+
+    boards = [
+        {"id": "b_private", "team": {"id": "t1"}, "sharingPolicy": _sharing("private", "private", "edit")},
+        {"id": "b_ok", "team": {"id": "t2"}, "sharingPolicy": _sharing("private", "private", "edit")},
+    ]
+
+    def fake_iter_board_items(board_id: str) -> Iterator[Any]:
+        if board_id == "b_private":
+            raise BoardAccessForbiddenError(
+                "Board access forbidden (Miro code 6.0108) for b_private"
+            )
+        yield {"id": "i1", "type": "image", "data": {"imageUrl": "u"}}
+
+    with patch.object(
+        MiroConnector, "_iter_boards", return_value=iter(boards)
+    ), patch.object(
+        MiroConnector, "_iter_board_items", side_effect=fake_iter_board_items
+    ):
+        batches = list(connector.retrieve_all_slim_docs_perm_sync())
+
+    doc_ids = {doc.id for batch in batches for doc in batch}
+    assert doc_ids == {"miro__b_ok__i1"}
+
+
+def test_perm_sync_fatal_on_missing_scope() -> None:
+    """InsufficientPermissionsError (systemic token misconfig) propagates and aborts."""
+    connector = _connector()
+
+    boards = [
+        {"id": "b1", "team": {"id": "t1"}, "sharingPolicy": _sharing("private", "private", "edit")},
+    ]
+
+    with patch.object(
+        MiroConnector, "_iter_boards", return_value=iter(boards)
+    ), patch.object(
+        MiroConnector,
+        "_iter_board_items",
+        side_effect=InsufficientPermissionsError("Required scopes: boards:read"),
+    ):
+        with pytest.raises(InsufficientPermissionsError):
+            list(connector.retrieve_all_slim_docs_perm_sync())
+
+
+def test_indexing_skips_private_board_on_403_6108() -> None:
+    """BoardAccessForbiddenError from _iter_board_items during indexing is caught per board."""
+    connector = _connector()
+
+    boards = [
+        {"id": "b_private", "team": {"id": "t1"}, "name": "Private"},
+        {"id": "b_ok", "team": {"id": "t2"}, "name": "OK"},
+    ]
+
+    def fake_iter_board_items(board_id: str) -> Iterator[Any]:
+        if board_id == "b_private":
+            raise BoardAccessForbiddenError(
+                "Board access forbidden (Miro code 6.0108) for b_private"
+            )
+        return iter([])  # accessible but empty — enough to confirm no abort
+
+    with patch.object(
+        MiroConnector, "_iter_boards", return_value=iter(boards)
+    ), patch.object(
+        MiroConnector, "_iter_board_items", side_effect=fake_iter_board_items
+    ):
+        # Must not raise; both boards attempted, private one silently skipped.
+        batches = list(connector.load_from_state())
+
+    assert batches == []
+
+
+def test_get_json_403_6108_raises_board_access_forbidden() -> None:
+    """_get_json raises BoardAccessForbiddenError for 403 body with code 6.0108."""
+    connector = _connector()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.text = (
+        '{"type":"error","code":"6.0108",'
+        '"message":"User is not allowed to view board.","status":403}'
+    )
+
+    with patch("onyx.connectors.miro.connector.rl_requests.get", return_value=mock_resp):
+        with pytest.raises(BoardAccessForbiddenError):
+            connector._get_json("https://api.miro.com/v2/boards/b1/items")
+
+
+def test_get_json_missing_scope_raises_insufficient_permissions() -> None:
+    """_get_json raises InsufficientPermissionsError for a non-6.0108 403 (missing scope)."""
+    connector = _connector()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.text = (
+        '{"type":"error","code":"insufficientPermissions",'
+        '"message":"Required scopes: boards:read","status":403}'
+    )
+
+    with patch("onyx.connectors.miro.connector.rl_requests.get", return_value=mock_resp):
+        with pytest.raises(InsufficientPermissionsError):
+            connector._get_json("https://api.miro.com/v2/boards")
