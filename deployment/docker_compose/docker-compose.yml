@@ -530,6 +530,56 @@ services:
     user: root
     volumes:
       - ${DOCKER_SOCK_PATH:-/var/run/docker.sock}:/var/run/docker.sock
+    
+  # gemma4:
+  #   image: vllm/vllm-openai:gemma4-unified
+  #   container_name: vllm-gemma4-e4b
+  #   restart: unless-stopped
+  #   env_file:
+  #     - path: ../../.env
+  #       required: true
+  #   environment:
+  #     # Required for models with complex or heterogeneous attention heads
+  #     - VLLM_USE_TRITON_AWQ=1
+  #   volumes:
+  #     # Caches the model locally so it doesn't redownload on restart
+  #     - ~/.cache/huggingface:/root/.cache/huggingface
+  #   ports:
+  #     - "8001:8000"
+  #   ipc: host
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   # Official recipe: E4B BF16 wants 24GB+. On 16GB use FP8 + text-only (skip MM towers).
+  #   command:
+  #     - google/gemma-4-E4B-it
+  #     - --quantization
+  #     - fp8
+  #     - --kv-cache-dtype
+  #     - fp8
+  #     - --max-model-len
+  #     - "4096"
+  #     - --gpu-memory-utilization
+  #     - "0.90"
+  #     - --max-num-seqs
+  #     - "4"
+  #     - --enforce-eager
+  #     - --limit-mm-per-prompt
+  #     - '{"image":0,"audio":0}'
+  #     - --reasoning-parser
+  #     - gemma4
+  #     - --tool-call-parser
+  #     - gemma4
+  #     - --host
+  #     - 0.0.0.0
+  #     - --port
+  #     - "8000"
 
     # uncomment below + comment out the above to use the `docker-in-docker` execution mode
     # privileged: true
