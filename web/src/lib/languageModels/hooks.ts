@@ -43,7 +43,7 @@ type RawWellKnownLLMProviderDescriptor = Omit<
 // ---------------------------------------------------------------------------
 
 function enrichModelConfiguration(
-  mc: RawModelConfiguration
+  mc: RawModelConfiguration,
 ): ModelConfiguration {
   return {
     ...mc,
@@ -52,7 +52,7 @@ function enrichModelConfiguration(
 }
 
 function enrichDescriptors(
-  providers: RawLLMProviderDescriptor[]
+  providers: RawLLMProviderDescriptor[],
 ): LLMProviderDescriptor[] {
   return providers.map((p) => ({
     ...p,
@@ -122,12 +122,12 @@ export function useLLMProviders(agentId?: number) {
     {
       revalidateOnFocus: false,
       dedupingInterval: 60000,
-    }
+    },
   );
 
   const data = useMemo(
     () => (raw ? { ...raw, providers: enrichDescriptors(raw.providers) } : raw),
-    [raw]
+    [raw],
   );
 
   return {
@@ -186,12 +186,12 @@ export function useAdminLLMProviders() {
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 60000,
-    }
+    },
   );
 
   const data = useMemo(
     () => (raw ? { ...raw, providers: enrichViews(raw.providers) } : raw),
-    [raw]
+    [raw],
   );
 
   return {
@@ -231,7 +231,7 @@ export function useWellKnownLLMProvider(providerName: LLMProviderName) {
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 60000,
-    }
+    },
   );
 
   const data = useMemo(
@@ -242,7 +242,7 @@ export function useWellKnownLLMProvider(providerName: LLMProviderName) {
             known_models: raw.known_models.map(enrichModelConfiguration),
           }
         : raw,
-    [raw]
+    [raw],
   );
 
   return {
@@ -271,7 +271,7 @@ export function useCustomProviderNames() {
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 60000,
-    }
+    },
   );
 
   return {
@@ -284,6 +284,7 @@ export function useCustomProviderNames() {
 export interface DefaultLlmReference {
   providerName: string;
   modelName: string;
+  providerId: number;
 }
 
 export interface LlmDefaults {
@@ -304,7 +305,7 @@ export interface LlmDefaults {
   defaultLlm: DefaultLlmReference | null;
   /**
    * The admin-configured default *vision* model, resolved to the same
-   * `{ providerName, modelName }` shape as `defaultLlm`. Mirrors the
+   * `{ providerName, modelName, providerId }` shape as `defaultLlm`. Mirrors the
    * resolution path of `defaultLlm` but for `default_vision`. Used by
    * indexing-time captioning and any other vision-only feature.
    */
@@ -325,39 +326,48 @@ export function useLlmDefaults(): LlmDefaults {
   const hasAnyLlm = useMemo(
     () =>
       (llmProviders ?? []).some((p) =>
-        p.model_configurations.some((m) => m.is_visible)
+        p.model_configurations.some((m) => m.is_visible),
       ),
-    [llmProviders]
+    [llmProviders],
   );
 
   const hasAnyVisionLlm = useMemo(
     () =>
       (llmProviders ?? []).some((p) =>
         p.model_configurations.some(
-          (m) => m.is_visible && m.supports_image_input
-        )
+          (m) => m.is_visible && m.supports_image_input,
+        ),
       ),
-    [llmProviders]
+    [llmProviders],
   );
 
   const resolveDefault = useCallback(
-    (raw: { provider_id: number; model_name: string } | null) => {
+    (
+      raw: { provider_id: number; model_name: string } | null,
+      // Contextual RAG looks providers up by instance name; vision defaults
+      // are applied via provider_id and must survive null names (Vertex/Gemini).
+      requireName: boolean,
+    ) => {
       if (!llmProviders || !raw) return null;
       const provider = llmProviders.find((p) => p.id === raw.provider_id);
       if (!provider) return null;
-      if (!provider.name) return null;
-      return { providerName: provider.name, modelName: raw.model_name };
+      if (requireName && !provider.name) return null;
+      return {
+        providerName: provider.name ?? "",
+        modelName: raw.model_name,
+        providerId: provider.id,
+      };
     },
-    [llmProviders]
+    [llmProviders],
   );
 
   const defaultLlm = useMemo<DefaultLlmReference | null>(
-    () => resolveDefault(defaultText),
-    [resolveDefault, defaultText]
+    () => resolveDefault(defaultText, true),
+    [resolveDefault, defaultText],
   );
   const defaultVisionResolved = useMemo<DefaultLlmReference | null>(
-    () => resolveDefault(defaultVision),
-    [resolveDefault, defaultVision]
+    () => resolveDefault(defaultVision, false),
+    [resolveDefault, defaultVision],
   );
 
   return {
