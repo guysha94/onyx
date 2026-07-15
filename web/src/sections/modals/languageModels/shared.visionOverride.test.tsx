@@ -114,6 +114,8 @@ describe("ModelSelectionField allowVisionOverride", () => {
     expect(screen.getByTestId("configs")).toHaveTextContent(
       '"supports_image_input":false'
     );
+    expect(screen.getByText("Input type")).toBeInTheDocument();
+    expect(screen.getByText("Text Only")).toBeInTheDocument();
     expect(screen.getByTestId("vision-select")).toHaveAttribute(
       "data-value",
       "text-only"
@@ -125,6 +127,7 @@ describe("ModelSelectionField allowVisionOverride", () => {
     expect(screen.getByTestId("configs")).toHaveTextContent(
       '"supports_image_input":true'
     );
+    expect(screen.getByText("Text & Image")).toBeInTheDocument();
     expect(screen.getByTestId("vision-select")).toHaveAttribute(
       "data-value",
       "text-image"

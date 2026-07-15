@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from onyx.db.enums import LLMModelFlowType
+from onyx.llm.constants import LlmProviderNames
 from onyx.server.manage.llm.models import LLMProviderDescriptor
 from onyx.server.manage.llm.models import ModelConfigurationUpsertRequest
 from onyx.server.manage.llm.models import ModelConfigurationView
@@ -155,6 +156,21 @@ class TestModelConfigurationViewVisionFallback:
         view = self._view(mc, self.STRICT_DYNAMIC_PROVIDER, False, litellm_vision=False)
 
         assert view.supports_image_input is False
+
+    def test_openai_compatible_gemma4_inferred_vision(self) -> None:
+        """OpenAI-Compatible Gemma 4 IDs are treated as vision via name heuristic
+        even when LiteLLM has no cost-map entry and no VISION flow is stored."""
+        mc = _make_model_config(
+            name="gemma4-e2b",
+            display_name="gemma4-e2b",
+            flow_types=[LLMModelFlowType.CHAT],
+        )
+
+        view = self._view(
+            mc, LlmProviderNames.OPENAI_COMPATIBLE, False, litellm_vision=False
+        )
+
+        assert view.supports_image_input is True
 
     def test_custom_config_false_when_cost_map_unaware(self) -> None:
         """No VISION flow and cost map doesn't know the model → False."""

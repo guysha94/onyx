@@ -536,23 +536,35 @@ function ModelRow({
   const rightChildren =
     allowVisionOverride || showVisionMarker ? (
       <div
-        className="flex items-center gap-2"
+        className="flex w-[9.5rem] shrink-0 flex-col items-stretch gap-1"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
       >
         {allowVisionOverride && (
-          <InputSelect
-            value={model.supports_image_input ? "text-image" : "text-only"}
-            onValueChange={(value) => onToggleVision(value === "text-image")}
-          >
-            <InputSelect.Trigger placeholder="Input type" />
-            <InputSelect.Content>
-              <InputSelect.Item value="text-only">Text Only</InputSelect.Item>
-              <InputSelect.Item value="text-image">
-                Text & Image
-              </InputSelect.Item>
-            </InputSelect.Content>
-          </InputSelect>
+          <>
+            <Text secondaryBody text03>
+              Input type
+            </Text>
+            <InputSelect
+              value={model.supports_image_input ? "text-image" : "text-only"}
+              onValueChange={(value) => onToggleVision(value === "text-image")}
+            >
+              <InputSelect.Trigger
+                aria-label={`Input type for ${displayName}`}
+                placeholder="Input type"
+              >
+                <Text as="p" text03>
+                  {model.supports_image_input ? "Text & Image" : "Text Only"}
+                </Text>
+              </InputSelect.Trigger>
+              <InputSelect.Content>
+                <InputSelect.Item value="text-only">Text Only</InputSelect.Item>
+                <InputSelect.Item value="text-image">
+                  Text & Image
+                </InputSelect.Item>
+              </InputSelect.Content>
+            </InputSelect>
+          </>
         )}
         {showVisionMarker && <VisionMarker model={model} />}
       </div>
@@ -699,7 +711,11 @@ export function ModelSelectionField({
       <Section gap={0.5}>
         <InputHorizontal
           title="Models"
-          description="Select models to make available for this provider."
+          description={
+            allowVisionOverride
+              ? "Select models to make available. For multimodal models (e.g. Gemma 4 / VL), set Input type to Text & Image so Image Processing / Captioning can use them."
+              : "Select models to make available for this provider."
+          }
           center
         >
           <Section flexDirection="row" gap={0}>
