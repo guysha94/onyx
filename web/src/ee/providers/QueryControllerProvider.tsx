@@ -21,6 +21,9 @@ import {
   QueryControllerValue,
   QueryState,
   AppMode,
+  DEFAULT_SEARCH_MAX_RESULTS,
+  MIN_SEARCH_MAX_RESULTS,
+  MAX_SEARCH_MAX_RESULTS,
 } from "@/providers/QueryControllerProvider";
 
 interface QueryControllerProviderProps {
@@ -98,6 +101,28 @@ export function QueryControllerProvider({
     setSourceFilter(next);
   }, []);
 
+  // ── Search-mode max-results cap (session-scoped) ───────────────────────
+  // `maxResults` is a real query parameter (unlike `sourceFilter`): it sets
+  // the `numHits` sent to every per-source request and is applied again as
+  // a final slice on the merged, score-sorted list, so it's a true global
+  // top-N cap rather than a per-source one. `maxResultsRef` is a synchronous
+  // mirror so the stable `performSearch` callback always reads the latest
+  // value without needing to be recreated on change.
+  const [maxResults, setMaxResults] = useState<number>(
+    DEFAULT_SEARCH_MAX_RESULTS
+  );
+  const maxResultsRef = useRef<number>(DEFAULT_SEARCH_MAX_RESULTS);
+  const applyMaxResults = useCallback((next: number) => {
+    const clamped = Number.isFinite(next)
+      ? Math.min(
+          Math.max(Math.trunc(next), MIN_SEARCH_MAX_RESULTS),
+          MAX_SEARCH_MAX_RESULTS
+        )
+      : DEFAULT_SEARCH_MAX_RESULTS;
+    maxResultsRef.current = clamped;
+    setMaxResults(clamped);
+  }, []);
+
   // ── Connected sources (for fan-out) ─────────────────────────────────────
   // Every search queries each of these sources independently so that
   // `sourceCounts` is always populated for every source, not just the
@@ -155,6 +180,7 @@ export function QueryControllerProvider({
       };
 
       const sourcesToQuery = availableSourcesRef.current;
+      const numHits = maxResultsRef.current;
 
       try {
         if (sourcesToQuery.length === 0) {
@@ -162,7 +188,7 @@ export function QueryControllerProvider({
             searchQuery,
             {
               filters: baseFilters,
-              numHits: 30,
+              numHits,
               includeContent: false,
               signal: controller.signal,
             }
@@ -187,7 +213,7 @@ export function QueryControllerProvider({
           sourcesToQuery.map((source) =>
             searchDocuments(searchQuery, {
               filters: { ...baseFilters, source_type: [source] },
-              numHits: 30,
+              numHits,
               includeContent: false,
               signal: controller.signal,
             })
@@ -203,12 +229,10 @@ export function QueryControllerProvider({
           return;
         }
 
-        const counts: Record<string, number> = {};
         const allDocs: SearchDocWithContent[] = [];
         let llmSelected: string[] | null = null;
         sourcesToQuery.forEach((source, i) => {
           const docs = responses[i]!.search_docs;
-          counts[source] = docs.length;
           allDocs.push(...docs);
           const selectedForSource = responses[i]!.llm_selected_doc_ids;
           if (selectedForSource) {
@@ -216,9 +240,25 @@ export function QueryControllerProvider({
           }
         });
         allDocs.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        // Each per-source query already returned up to `numHits` docs, but the
+        // combined list must still be capped to a true global top-N by score
+        // rather than showing (numHits * number of sources) results.
+        const cappedDocs = allDocs.slice(0, numHits);
+
+        // Derive counts from the capped, displayed set (not the raw per-source
+        // responses) so they always sum to at most `numHits` and match exactly
+        // what's shown when a given source is selected — a source whose docs
+        // scored lower can be partially or fully squeezed out by the global cap.
+        const counts: Record<string, number> = {};
+        sourcesToQuery.forEach((source) => {
+          counts[source] = 0;
+        });
+        cappedDocs.forEach((doc) => {
+          counts[doc.source_type] = (counts[doc.source_type] ?? 0) + 1;
+        });
 
         setError(null);
-        setSearchResults(allDocs);
+        setSearchResults(cappedDocs);
         setSourceCounts(counts);
         setLlmSelectedDocIds(llmSelected);
       } catch (err) {
@@ -390,7 +430,8 @@ export function QueryControllerProvider({
     setError(null);
     // New session (or first mount) always starts scoped to all sources.
     applySourceFilter([]);
-  }, [applySourceFilter]);
+    applyMaxResults(DEFAULT_SEARCH_MAX_RESULTS);
+  }, [applySourceFilter, applyMaxResults]);
 
   const value: QueryControllerValue = useMemo(
     () => ({
@@ -402,6 +443,8 @@ export function QueryControllerProvider({
       error,
       sourceFilter,
       applySourceFilter,
+      maxResults,
+      applyMaxResults,
       submit,
       refineSearch,
       reset,
@@ -415,6 +458,8 @@ export function QueryControllerProvider({
       error,
       sourceFilter,
       applySourceFilter,
+      maxResults,
+      applyMaxResults,
       submit,
       refineSearch,
       reset,

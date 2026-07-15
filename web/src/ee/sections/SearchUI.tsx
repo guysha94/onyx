@@ -18,12 +18,25 @@ import { SourceIcon } from "@/components/SourceIcon";
 import Text from "@/refresh-components/texts/Text";
 import { Section } from "@/layouts/general-layouts";
 import { Popover, PopoverMenu } from "@opal/components";
-import { SvgCheck, SvgClock, SvgTag, SvgPlug, SvgSimpleLoader } from "@opal/icons";
+import {
+  SvgCheck,
+  SvgClock,
+  SvgTag,
+  SvgPlug,
+  SvgHash,
+  SvgSimpleLoader,
+} from "@opal/icons";
 import { FilterButton } from "@opal/components";
 import { InputTypeIn } from "@opal/components";
+import InputNumber from "@/refresh-components/inputs/InputNumber";
 import useFilter from "@/hooks/useFilter";
 import { LineItemButton } from "@opal/components";
-import { useQueryController } from "@/providers/QueryControllerProvider";
+import {
+  useQueryController,
+  DEFAULT_SEARCH_MAX_RESULTS,
+  MIN_SEARCH_MAX_RESULTS,
+  MAX_SEARCH_MAX_RESULTS,
+} from "@/providers/QueryControllerProvider";
 import { cn } from "@opal/utils";
 import { toast } from "@/hooks/useToast";
 
@@ -65,6 +78,8 @@ export default function SearchUI({
     error,
     sourceFilter,
     applySourceFilter,
+    maxResults,
+    applyMaxResults,
     refineSearch: onRefineSearch,
   } = useQueryController();
 
@@ -84,6 +99,11 @@ export default function SearchUI({
   const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [sourceFilterOpen, setSourceFilterOpen] = useState(false);
+  const [maxResultsFilterOpen, setMaxResultsFilterOpen] = useState(false);
+  // Snapshot of `maxResults` taken when the popover opens, so we only
+  // re-query on close if the value actually changed (avoids a re-query per
+  // keystroke/step while the popover is open).
+  const maxResultsOnOpenRef = useRef<number>(maxResults);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -184,6 +204,27 @@ export default function SearchUI({
     applySourceFilter([]);
     setCurrentPage(1);
     setSourceFilterOpen(false);
+  };
+
+  // Unlike source selection, `maxResults` is a real query parameter (it sets
+  // `numHits`), so a change must re-run the search. We only do this on
+  // popover close (not on every keystroke/step) by comparing against the
+  // value captured when the popover opened.
+  const handleMaxResultsOpenChange = (open: boolean) => {
+    if (open) {
+      maxResultsOnOpenRef.current = maxResults;
+    } else if (maxResults !== maxResultsOnOpenRef.current) {
+      setCurrentPage(1);
+      onRefineSearch(buildFilters());
+    }
+    setMaxResultsFilterOpen(open);
+  };
+
+  const handleMaxResultsClear = () => {
+    applyMaxResults(DEFAULT_SEARCH_MAX_RESULTS);
+    setCurrentPage(1);
+    setMaxResultsFilterOpen(false);
+    onRefineSearch(buildFilters());
   };
 
   const showEmpty = !error && filteredAndSortedResults.length === 0;
@@ -364,6 +405,40 @@ export default function SearchUI({
                       />
                     );
                   })}
+                </PopoverMenu>
+              </Popover.Content>
+            </Popover>
+
+            {/* Max results filter */}
+            <Popover
+              open={maxResultsFilterOpen}
+              onOpenChange={handleMaxResultsOpenChange}
+            >
+              <Popover.Trigger asChild>
+                <FilterButton
+                  icon={SvgHash}
+                  active={maxResults !== DEFAULT_SEARCH_MAX_RESULTS}
+                  onClear={handleMaxResultsClear}
+                  data-testid="max-results-filter-trigger"
+                >
+                  {`Max: ${maxResults}`}
+                </FilterButton>
+              </Popover.Trigger>
+              <Popover.Content align="start" width="md">
+                <PopoverMenu>
+                  {[
+                    <InputNumber
+                      key="max-results-input"
+                      value={maxResults}
+                      onChange={(next) =>
+                        applyMaxResults(next ?? DEFAULT_SEARCH_MAX_RESULTS)
+                      }
+                      min={MIN_SEARCH_MAX_RESULTS}
+                      max={MAX_SEARCH_MAX_RESULTS}
+                      defaultValue={DEFAULT_SEARCH_MAX_RESULTS}
+                      showReset
+                    />,
+                  ]}
                 </PopoverMenu>
               </Popover.Content>
             </Popover>

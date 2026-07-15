@@ -5,6 +5,9 @@ import { SearchDocWithContent } from "@/lib/search/interfaces";
 import {
   QueryControllerProvider,
   useQueryController,
+  DEFAULT_SEARCH_MAX_RESULTS,
+  MIN_SEARCH_MAX_RESULTS,
+  MAX_SEARCH_MAX_RESULTS,
 } from "@/providers/QueryControllerProvider";
 
 const mockSearchDocuments = jest.fn();
@@ -123,6 +126,7 @@ describe("EE QueryControllerProvider search fan-out", () => {
       document_set: null,
       source_type: null,
     });
+    expect(options.numHits).toBe(DEFAULT_SEARCH_MAX_RESULTS);
     expect(result.current.sourceCounts).toEqual({});
   });
 
@@ -154,6 +158,9 @@ describe("EE QueryControllerProvider search fan-out", () => {
         },
       ])
     );
+    for (const [, options] of mockSearchDocuments.mock.calls) {
+      expect(options.numHits).toBe(DEFAULT_SEARCH_MAX_RESULTS);
+    }
   });
 
   it("includes federated connectors in the fan-out alongside regular CC pairs", async () => {
@@ -298,5 +305,187 @@ describe("EE QueryControllerProvider search fan-out", () => {
 
     expect(result.current.sourceFilter).toEqual([]);
     expect(result.current.sourceCounts).toEqual({});
+  });
+});
+
+describe("EE QueryControllerProvider max results", () => {
+  beforeEach(() => {
+    mockSearchDocuments.mockReset();
+    mockSearchDocuments.mockImplementation(emptySearchResponse);
+    setConnectedSources([]);
+  });
+
+  it("defaults maxResults to DEFAULT_SEARCH_MAX_RESULTS", () => {
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+    expect(result.current.maxResults).toBe(DEFAULT_SEARCH_MAX_RESULTS);
+  });
+
+  it("applyMaxResults updates numHits sent to every per-source request", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    act(() => {
+      result.current.applyMaxResults(5);
+    });
+    expect(result.current.maxResults).toBe(5);
+
+    await act(async () => {
+      await result.current.submit("capped query", jest.fn());
+    });
+
+    expect(mockSearchDocuments).toHaveBeenCalledTimes(2);
+    for (const [, options] of mockSearchDocuments.mock.calls) {
+      expect(options.numHits).toBe(5);
+    }
+  });
+
+  it("slices the merged, score-sorted results to the global top-N even when sources return more combined", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
+    mockSearchDocuments.mockImplementation((_query, options) => {
+      const source = options.filters.source_type[0] as ValidSources;
+      if (source === ValidSources.Jira) {
+        return Promise.resolve({
+          all_executed_queries: [],
+          search_docs: [
+            makeDoc("jira-1", ValidSources.Jira, 0.9),
+            makeDoc("jira-2", ValidSources.Jira, 0.5),
+          ],
+          llm_selected_doc_ids: null,
+          error: null,
+        });
+      }
+      return Promise.resolve({
+        all_executed_queries: [],
+        search_docs: [
+          makeDoc("gdrive-1", ValidSources.GoogleDrive, 0.8),
+          makeDoc("gdrive-2", ValidSources.GoogleDrive, 0.3),
+        ],
+        llm_selected_doc_ids: null,
+        error: null,
+      });
+    });
+
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    act(() => {
+      result.current.applyMaxResults(2);
+    });
+
+    await act(async () => {
+      await result.current.submit("global cap query", jest.fn());
+    });
+
+    // 4 docs returned combined, but only the top 2 by score should surface.
+    expect(result.current.searchResults.map((d) => d.document_id)).toEqual([
+      "jira-1",
+      "gdrive-1",
+    ]);
+    // sourceCounts must reflect the capped, displayed set (not the raw 2+2
+    // per-source responses), so it sums to the cap and matches what's shown
+    // when a source is selected.
+    expect(result.current.sourceCounts).toEqual({
+      [ValidSources.Jira]: 1,
+      [ValidSources.GoogleDrive]: 1,
+    });
+  });
+
+  it("squeezes a lower-scoring source's count down to its surviving-doc count under the global cap", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
+    mockSearchDocuments.mockImplementation((_query, options) => {
+      const source = options.filters.source_type[0] as ValidSources;
+      if (source === ValidSources.Jira) {
+        // All of Jira's docs score higher than Google Drive's.
+        return Promise.resolve({
+          all_executed_queries: [],
+          search_docs: [
+            makeDoc("jira-1", ValidSources.Jira, 0.95),
+            makeDoc("jira-2", ValidSources.Jira, 0.9),
+            makeDoc("jira-3", ValidSources.Jira, 0.85),
+          ],
+          llm_selected_doc_ids: null,
+          error: null,
+        });
+      }
+      return Promise.resolve({
+        all_executed_queries: [],
+        search_docs: [
+          makeDoc("gdrive-1", ValidSources.GoogleDrive, 0.5),
+          makeDoc("gdrive-2", ValidSources.GoogleDrive, 0.4),
+        ],
+        llm_selected_doc_ids: null,
+        error: null,
+      });
+    });
+
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    act(() => {
+      result.current.applyMaxResults(4);
+    });
+
+    await act(async () => {
+      await result.current.submit("squeeze query", jest.fn());
+    });
+
+    // Raw per-source hits are 3 + 2 = 5, but the global cap of 4 squeezes
+    // Google Drive down to just 1 surviving doc (gdrive-1).
+    expect(result.current.searchResults).toHaveLength(4);
+    expect(result.current.sourceCounts).toEqual({
+      [ValidSources.Jira]: 3,
+      [ValidSources.GoogleDrive]: 1,
+    });
+    // The counts must sum to the actual number of displayed results, not the
+    // raw per-source total (5).
+    expect(
+      Object.values(result.current.sourceCounts).reduce((a, b) => a + b, 0)
+    ).toBe(result.current.searchResults.length);
+  });
+
+  it("clamps out-of-range values to MIN/MAX_SEARCH_MAX_RESULTS", () => {
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    act(() => {
+      result.current.applyMaxResults(0);
+    });
+    expect(result.current.maxResults).toBe(MIN_SEARCH_MAX_RESULTS);
+
+    act(() => {
+      result.current.applyMaxResults(-50);
+    });
+    expect(result.current.maxResults).toBe(MIN_SEARCH_MAX_RESULTS);
+
+    act(() => {
+      result.current.applyMaxResults(9999);
+    });
+    expect(result.current.maxResults).toBe(MAX_SEARCH_MAX_RESULTS);
+  });
+
+  it("falls back to the default for non-finite input", () => {
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    act(() => {
+      result.current.applyMaxResults(42);
+    });
+    expect(result.current.maxResults).toBe(42);
+
+    act(() => {
+      result.current.applyMaxResults(NaN);
+    });
+    expect(result.current.maxResults).toBe(DEFAULT_SEARCH_MAX_RESULTS);
+  });
+
+  it("resets maxResults to the default on session change", () => {
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    act(() => {
+      result.current.applyMaxResults(7);
+    });
+    expect(result.current.maxResults).toBe(7);
+
+    act(() => {
+      result.current.reset();
+    });
+
+    expect(result.current.maxResults).toBe(DEFAULT_SEARCH_MAX_RESULTS);
   });
 });

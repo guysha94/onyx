@@ -8,6 +8,15 @@ import { ValidSources } from "@/lib/types";
 
 export type AppMode = "auto" | "search" | "chat";
 
+/**
+ * Single source of truth for Search mode's max-results bounds. Import these
+ * everywhere a default/min/max is needed (EE provider, SearchUI) instead of
+ * repeating the literals, so bumping the default only requires one edit.
+ */
+export const DEFAULT_SEARCH_MAX_RESULTS = 30;
+export const MIN_SEARCH_MAX_RESULTS = 1;
+export const MAX_SEARCH_MAX_RESULTS = 500;
+
 export type QueryState =
   | { phase: "idle"; appMode: AppMode }
   | { phase: "classifying" }
@@ -44,6 +53,19 @@ export interface QueryControllerValue {
   sourceFilter: ValidSources[];
   /** The only way to change `sourceFilter`. */
   applySourceFilter: (next: ValidSources[]) => void;
+  /**
+   * Session-scoped Search-mode max-results cap, clamped to
+   * `[MIN_SEARCH_MAX_RESULTS, MAX_SEARCH_MAX_RESULTS]`. Applied as the
+   * `numHits` for every per-source search request and as a final slice on
+   * the merged, score-sorted result list. Defaults to
+   * `DEFAULT_SEARCH_MAX_RESULTS`; reset to it on session change.
+   */
+  maxResults: number;
+  /**
+   * The only way to change `maxResults`. Clamps out-of-range/invalid input
+   * rather than rejecting it.
+   */
+  applyMaxResults: (next: number) => void;
   /** Submit a query - routes to search or chat based on app mode */
   submit: (
     query: string,
@@ -70,6 +92,8 @@ export const QueryControllerContext = createContext<QueryControllerValue>({
   error: null,
   sourceFilter: [],
   applySourceFilter: () => undefined,
+  maxResults: DEFAULT_SEARCH_MAX_RESULTS,
+  applyMaxResults: () => undefined,
   submit: async (_q, onChat) => {
     onChat(_q);
   },
