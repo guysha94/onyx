@@ -504,13 +504,16 @@ class MondayConnector(
             ) from exc
 
     def validate_perm_sync(self) -> None:
-        board_contexts = list(self._iter_board_contexts())
-        if not board_contexts:
+        # Only probe the first board — full enumeration of unscoped boards()
+        # can exceed the frontend connector-creation timeout and race-delete
+        # the connector mid credential-link.
+        first_board = next(self._iter_board_contexts(), None)
+        if first_board is None:
             raise ConnectorValidationError(
                 "monday.com permission sync validation could not find any accessible boards."
             )
 
-        board_id = board_contexts[0]["board_id"]
+        board_id = first_board["board_id"]
         external_access = get_board_permissions(
             self._run_query, board_id, add_prefix=False
         )

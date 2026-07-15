@@ -12,7 +12,7 @@ import { Section } from "@/layouts/general-layouts";
 import { Interactive } from "@opal/core";
 import Truncated from "@/refresh-components/texts/Truncated";
 import { timeAgo } from "@opal/time";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 // FORK: miro
 import { buildImgUrl } from "@/app/app/components/files/images/utils";
 import { AssetImageLightbox } from "@/ee/sections/AssetImageLightbox";
@@ -41,7 +41,13 @@ export default function SearchCard({
 
   // FORK: miro - lightbox state for thumbnail click.
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const thumbnailFileId = document.image_file_id ?? document.file_id ?? null;
+  const showThumbnail = Boolean(thumbnailFileId) && !thumbnailFailed;
+
+  useEffect(() => {
+    setThumbnailFailed(false);
+  }, [thumbnailFileId]);
 
   function handleClick() {
     if (document.link) {
@@ -88,8 +94,9 @@ export default function SearchCard({
             <Section alignItems="start" gap={0.25}>
               {/* Thumbnail (e.g. Miro image assets) - FORK: miro. Falls back
                   to file_id when a text chunk (no image_file_id) is the top
-                  hit for an image doc. Clicking opens the lightbox. */}
-              {thumbnailFileId && (
+                  hit for an image doc. Clicking opens the lightbox. Hide on
+                  load failure so non-image file_ids never show broken alt text. */}
+              {showThumbnail && thumbnailFileId && (
                 <>
                   <AssetImageLightbox
                     fileId={thumbnailFileId}
@@ -108,6 +115,7 @@ export default function SearchCard({
                     src={buildImgUrl(thumbnailFileId)}
                     alt={document.semantic_identifier}
                     loading="lazy"
+                    onError={() => setThumbnailFailed(true)}
                     onClick={(e) => {
                       e.stopPropagation();
                       setLightboxOpen(true);

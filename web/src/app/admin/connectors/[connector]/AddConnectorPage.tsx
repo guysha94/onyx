@@ -70,12 +70,23 @@ export interface AdvancedConfig {
 }
 
 const BASE_CONNECTOR_URL = "/api/manage/admin/connector";
-const CONNECTOR_CREATION_TIMEOUT_MS = 10000; // ~10 seconds is reasonable for longer connector validation
+// Live Cloud validation (e.g. Confluence + Auto Sync Permissions) commonly
+// exceeds 10s over slower links; keep a generous UI budget and abort the
+// in-flight fetches before any timeout rollback.
+const CONNECTOR_CREATION_TIMEOUT_MS = 45000;
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
 
 export async function submitConnector<T>(
   connector: ConnectorBase<T>,
   connectorId?: number,
-  fakeCredential?: boolean
+  fakeCredential?: boolean,
+  signal?: AbortSignal
 ): Promise<{ message: string; isSuccess: boolean; response?: Connector<T> }> {
   const isUpdate = connectorId !== undefined;
   if (!connector.connector_specific_config) {
@@ -92,6 +103,7 @@ export async function submitConnector<T>(
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ ...connector }),
+          signal,
         }
       );
       if (response.ok) {
@@ -110,6 +122,7 @@ export async function submitConnector<T>(
             "Content-Type": "application/json",
           },
           body: JSON.stringify(connector),
+          signal,
         }
       );
 
@@ -122,6 +135,9 @@ export async function submitConnector<T>(
       }
     }
   } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
     return { message: `Error: ${error}`, isSuccess: false };
   }
 }
@@ -387,6 +403,7 @@ export default function AddConnector({
         }
 
         setCreatingConnector(true);
+        const abortController = new AbortController();
         try {
           const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) =>
             setTimeout(
@@ -396,79 +413,95 @@ export default function AddConnector({
           );
 
           const connectorCreationPromise = (async () => {
-            const { message, isSuccess, response } = await submitConnector<any>(
-              {
-                connector_specific_config: transformedConnectorSpecificConfig,
-                input_type: isLoadState(connector) ? "load_state" : "poll", // single case
-                name: name,
-                source: connector,
-                access_type: access_type,
-                refresh_freq: advancedConfiguration.refreshFreq || null,
-                prune_freq: advancedConfiguration.pruneFreq || null,
-                indexing_start: advancedConfiguration.indexingStart || null,
-                groups: groups,
-              },
-              undefined,
-              credentialActivated ? false : true
-            );
+            try {
+              const { message, isSuccess, response } =
+                await submitConnector<any>(
+                  {
+                    connector_specific_config:
+                      transformedConnectorSpecificConfig,
+                    input_type: isLoadState(connector) ? "load_state" : "poll", // single case
+                    name: name,
+                    source: connector,
+                    access_type: access_type,
+                    refresh_freq: advancedConfiguration.refreshFreq || null,
+                    prune_freq: advancedConfiguration.pruneFreq || null,
+                    indexing_start:
+                      advancedConfiguration.indexingStart || null,
+                    groups: groups,
+                  },
+                  undefined,
+                  credentialActivated ? false : true,
+                  abortController.signal
+                );
 
-            // Store the connector id immediately for potential timeout
-            if (response?.id) {
-              connectorIdRef.current = response.id;
-            }
-
-            // If no credential
-            if (!credentialActivated) {
-              if (isSuccess) {
-                onSuccess();
-              } else {
-                toast.error(message);
+              // Store the connector id immediately for potential timeout
+              if (response?.id) {
+                connectorIdRef.current = response.id;
               }
-            }
 
-            // With credential
-            if (credentialActivated && isSuccess && response) {
-              const credential =
-                currentCredential ||
-                liveGDriveCredential ||
-                liveGmailCredential;
-              const linkCredentialResponse = await linkCredential(
-                response.id,
-                credential!.id,
-                name,
-                access_type,
-                groups,
-                auto_sync_options
-              );
-              if (linkCredentialResponse.ok) {
-                onSuccess();
-              } else {
-                const errorData = await linkCredentialResponse.json();
-
-                if (!timeoutErrorHappenedRef.current) {
-                  // Only show error if timeout didn't happen
-                  toast.error(errorData.detail || errorData.message);
+              // If no credential
+              if (!credentialActivated) {
+                if (isSuccess) {
+                  onSuccess();
+                } else if (!timeoutErrorHappenedRef.current) {
+                  toast.error(message);
                 }
               }
-            } else if (isSuccess) {
-              onSuccess();
-            } else {
-              toast.error(message);
-            }
 
-            timeoutErrorHappenedRef.current = false;
-            return;
+              // With credential
+              if (credentialActivated && isSuccess && response) {
+                const credential =
+                  currentCredential ||
+                  liveGDriveCredential ||
+                  liveGmailCredential;
+                const linkCredentialResponse = await linkCredential(
+                  response.id,
+                  credential!.id,
+                  name,
+                  access_type,
+                  groups,
+                  auto_sync_options,
+                  undefined,
+                  abortController.signal
+                );
+                if (linkCredentialResponse.ok) {
+                  onSuccess();
+                } else {
+                  const errorData = await linkCredentialResponse.json();
+
+                  if (!timeoutErrorHappenedRef.current) {
+                    // Only show error if timeout didn't happen
+                    toast.error(errorData.detail || errorData.message);
+                  }
+                }
+              } else if (isSuccess) {
+                onSuccess();
+              } else if (!timeoutErrorHappenedRef.current) {
+                toast.error(message);
+              }
+            } catch (error) {
+              // Aborted by the timeout race — timeout branch owns the toast/rollback.
+              if (
+                isAbortError(error) ||
+                timeoutErrorHappenedRef.current ||
+                abortController.signal.aborted
+              ) {
+                return;
+              }
+              throw error;
+            } finally {
+              timeoutErrorHappenedRef.current = false;
+            }
           })();
 
           const result = (await Promise.race([
             connectorCreationPromise,
             timeoutPromise,
-          ])) as {
-            isTimeout?: true;
-          };
+          ])) as { isTimeout?: true } | void;
 
-          if (result.isTimeout) {
+          if (result?.isTimeout) {
             timeoutErrorHappenedRef.current = true;
+            abortController.abort();
             toast.error(
               `Operation timed out after ${
                 CONNECTOR_CREATION_TIMEOUT_MS / 1000

@@ -86,7 +86,14 @@ _MINIMUM_PAGINATION_LIMIT = 5
 _SERVER_ERROR_CODES = {500, 502, 503, 504}
 
 _CONFLUENCE_SPACES_API_V1 = "rest/api/space"
-_CONFLUENCE_SPACES_API_V2 = "wiki/api/v2/spaces"
+# Relative to ``wiki_base``. When wiki_base already ends with ``/wiki``
+# (the UI's recommended Cloud form), the path must be ``api/v2/spaces``.
+# atlassian-python-api joins with ``"/"``.join(strip("/")), so the older
+# ``wiki/api/v2/spaces`` produced ``…/wiki/wiki/api/v2/…`` which Confluence
+# answers with HTTP 202 + empty body — then ``response.json()`` raises
+# "Expecting value: line 1 column 1 (char 0)".
+_CONFLUENCE_SPACES_API_V2 = "api/v2/spaces"
+_CONFLUENCE_SPACES_API_V2_FROM_SITE_ROOT = "wiki/api/v2/spaces"
 
 # Atlassian KB documenting how Secure Administrator Sessions (WebSudo) breaks
 # admin JSON-RPC calls. Surfaced in the validation error so admins can act on
@@ -382,23 +389,40 @@ class OnyxConfluence:
         """
         # Determine API version once
         use_v2 = self._is_cloud and not self.scoped_token
-        base_url = _CONFLUENCE_SPACES_API_V2 if use_v2 else _CONFLUENCE_SPACES_API_V1
+        # wiki_base may be ``…/wiki`` (recommended) or the bare site root.
+        if self._url.rstrip("/").endswith("/wiki"):
+            v2_base = _CONFLUENCE_SPACES_API_V2
+        else:
+            v2_base = _CONFLUENCE_SPACES_API_V2_FROM_SITE_ROOT
+        base_url = v2_base if use_v2 else _CONFLUENCE_SPACES_API_V1
 
         try:
             yield from self._paginate_spaces_for_endpoint(
                 use_v2, base_url, limit, space_keys
             )
         except HTTPError as e:
-            if e.response.status_code == 404 and use_v2:
+            if e.response is not None and e.response.status_code == 404 and use_v2:
                 logger.warning(
-                    "v2 spaces API returned 404, falling back to v1 API. This may indicate an older Confluence Cloud instance."
+                    "v2 spaces API returned 404, falling back to v1 API. This may "
+                    "indicate an older Confluence Cloud instance."
                 )
-                # Fallback to v1
                 yield from self._paginate_spaces_for_endpoint(
                     False, _CONFLUENCE_SPACES_API_V1, limit, space_keys
                 )
             else:
                 raise
+        except (requests.exceptions.JSONDecodeError, json.JSONDecodeError) as e:
+            # Mis-joined ``…/wiki/wiki/api/v2/…`` historically returned HTTP 202
+            # with an empty body, which blows up in ``response.json()``.
+            if not use_v2:
+                raise
+            logger.warning(
+                "v2 spaces API returned non-JSON body (%s), falling back to v1 API.",
+                e,
+            )
+            yield from self._paginate_spaces_for_endpoint(
+                False, _CONFLUENCE_SPACES_API_V1, limit, space_keys
+            )
 
     def _probe_connection(
         self,

@@ -84,9 +84,9 @@ services:
   #   ports:
   #     - "8090:8090"
 
-  # relational_db:
-  #   ports:
-  #     - "${POSTGRES_HOST_PORT:-5432}:5432"
+  relational_db:
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
 
   opensearch:
     ports:

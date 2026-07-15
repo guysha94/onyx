@@ -250,6 +250,57 @@ def test_validate_perm_sync_rejects_empty_private_acl() -> None:
             connector.validate_perm_sync()
 
 
+def test_validate_perm_sync_rejects_no_boards() -> None:
+    connector = MondayConnector()
+    connector.load_credentials({"monday_api_token": "token"})
+    connector._iter_board_contexts = MagicMock(return_value=iter([]))
+
+    with pytest.raises(ConnectorValidationError, match="could not find any accessible boards"):
+        connector.validate_perm_sync()
+
+
+def test_validate_perm_sync_unscoped_stops_after_first_board() -> None:
+    """Unscoped validate_perm_sync must not paginate every board.
+
+    Materializing all boards() pages can exceed the frontend connector-creation
+    timeout and race-delete the connector before credential link completes.
+    """
+    from onyx.connectors.monday.connector import _LIST_ALL_BOARDS_QUERY
+
+    connector = MondayConnector()
+    connector.load_credentials({"monday_api_token": "token"})
+    connector._client = MagicMock()
+
+    # First page returns a full page (would normally continue); validation must
+    # stop after consuming the first board without requesting page 2.
+    page_one_boards = [
+        {
+            "id": str(i),
+            "name": f"Board {i}",
+            "workspace": {"id": "1", "name": "Workspace"},
+        }
+        for i in range(1, 51)
+    ]
+    connector._client.run_query.return_value = {"boards": page_one_boards}
+
+    with patch(
+        "onyx.connectors.monday.connector.get_board_permissions",
+        return_value=ExternalAccess(
+            external_user_emails={"user@example.com"},
+            external_user_group_ids=set(),
+            is_public=False,
+        ),
+    ) as mock_get_perms:
+        connector.validate_perm_sync()
+
+    connector._client.run_query.assert_called_once()
+    call_args = connector._client.run_query.call_args
+    assert call_args[0][0] == _LIST_ALL_BOARDS_QUERY
+    assert call_args[0][1] == {"boardsLimit": 50, "page": 1}
+    mock_get_perms.assert_called_once()
+    assert mock_get_perms.call_args[0][1] == "1"
+
+
 def test_iter_board_contexts_uses_board_workspace_name() -> None:
     connector = MondayConnector(workspace_ids=["5485895"])
     connector.load_credentials({"monday_api_token": "token"})
