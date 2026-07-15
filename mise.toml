@@ -8,16 +8,16 @@ DEPLOYMENT_DIR = "deployment/docker_compose"
 
 [tasks.build]
 description = "Build docker images"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml build"
+run = "docker compose --env-file .env -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml build"
 
 [tasks.dev]
 description = "Run dev with compose watch"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml up -d --wait && exec docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml watch"
+run = "docker compose --env-file .env -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml up -d --build"
 
 
 [tasks."dev:gpu"]
 description = "Run dev with GPU and HTTPS (nginx + Let's Encrypt on 443)"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev-ssl.yml up -d --build --wait"
+run = "docker compose --env-file .env -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev-ssl.yml up -d --build --wait"
 
 [tasks."dev:gpu:bootstrap-nginx"]
 description = "Restore temporary cert if nginx cannot start"
@@ -34,4 +34,4 @@ run_windows = "powershell -NoProfile -ExecutionPolicy Bypass -File {{vars.DEPLOY
 
 [tasks.down]
 description = "Stop dev containers"
-run = "docker compose -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.gpu.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev-ssl.yml down"
+run = "docker compose --env-file .env -f {{vars.DEPLOYMENT_DIR}}/docker-compose.yml -f {{vars.DEPLOYMENT_DIR}}/docker-compose.dev.yml down"

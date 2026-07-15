@@ -1,12 +1,15 @@
 import React, { PropsWithChildren } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { ValidSources } from "@/lib/types";
+import { SearchDocWithContent } from "@/lib/search/interfaces";
 import {
   QueryControllerProvider,
   useQueryController,
 } from "@/providers/QueryControllerProvider";
 
 const mockSearchDocuments = jest.fn();
+const mockUseCCPairs = jest.fn();
+const mockUseFederatedConnectors = jest.fn();
 
 // Stable object so the `useEffect(reset, [appFocus, reset])` sync effect in
 // the provider doesn't see a new `appFocus` identity on every render.
@@ -36,6 +39,16 @@ jest.mock("@/ee/lib/search/svc", () => ({
   classifyQuery: jest.fn(),
 }));
 
+jest.mock("@/hooks/useCCPairs", () => ({
+  __esModule: true,
+  default: (...args: unknown[]) => mockUseCCPairs(...args),
+}));
+
+jest.mock("@/lib/hooks", () => ({
+  useFederatedConnectors: (...args: unknown[]) =>
+    mockUseFederatedConnectors(...args),
+}));
+
 const wrapper = ({ children }: PropsWithChildren) => (
   <QueryControllerProvider>{children}</QueryControllerProvider>
 );
@@ -49,13 +62,53 @@ function emptySearchResponse() {
   });
 }
 
-describe("EE QueryControllerProvider source filter", () => {
+function makeDoc(
+  id: string,
+  source: ValidSources,
+  score: number
+): SearchDocWithContent {
+  return {
+    document_id: id,
+    chunk_ind: 0,
+    semantic_identifier: id,
+    link: null,
+    blurb: "",
+    source_type: source,
+    boost: 0,
+    hidden: false,
+    metadata: {},
+    score,
+    match_highlights: [],
+    updated_at: null,
+    is_internet: false,
+  };
+}
+
+/** Configures the two connected-source hooks the provider fans out over. */
+function setConnectedSources(
+  ccPairSources: ValidSources[],
+  federatedSources: ValidSources[] = []
+) {
+  mockUseCCPairs.mockReturnValue({
+    ccPairs: ccPairSources.map((source) => ({ source })),
+    isLoading: false,
+    error: null,
+    refetch: jest.fn(),
+  });
+  mockUseFederatedConnectors.mockReturnValue({
+    data: federatedSources.map((source) => ({ source })),
+    refreshFederatedConnectors: jest.fn(),
+  });
+}
+
+describe("EE QueryControllerProvider search fan-out", () => {
   beforeEach(() => {
     mockSearchDocuments.mockReset();
     mockSearchDocuments.mockImplementation(emptySearchResponse);
+    setConnectedSources([]);
   });
 
-  it("defaults to all sources (source_type: null) on a fresh bar-submit query", async () => {
+  it("falls back to a single unscoped search when there are no connected sources", async () => {
     const { result } = renderHook(() => useQueryController(), { wrapper });
 
     await act(async () => {
@@ -64,125 +117,186 @@ describe("EE QueryControllerProvider source filter", () => {
 
     expect(mockSearchDocuments).toHaveBeenCalledTimes(1);
     const [, options] = mockSearchDocuments.mock.calls[0]!;
-    expect(options.filters).toEqual({ source_type: null });
+    expect(options.filters).toEqual({
+      time_cutoff: null,
+      tags: null,
+      document_set: null,
+      source_type: null,
+    });
+    expect(result.current.sourceCounts).toEqual({});
   });
 
-  it("synthesizes the current selection from the ref on a new bar-submit query", async () => {
+  it("fans out one search per connected source, each scoped to that source", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
     const { result } = renderHook(() => useQueryController(), { wrapper });
-
-    act(() => {
-      result.current.applySourceFilter([ValidSources.Jira]);
-    });
-    expect(result.current.sourceFilter).toEqual([ValidSources.Jira]);
 
     await act(async () => {
       await result.current.submit("scoped query", jest.fn());
     });
 
-    expect(mockSearchDocuments).toHaveBeenCalledTimes(1);
-    const [, options] = mockSearchDocuments.mock.calls[0]!;
-    expect(options.filters).toEqual({ source_type: [ValidSources.Jira] });
+    expect(mockSearchDocuments).toHaveBeenCalledTimes(2);
+    const filtersBySource = mockSearchDocuments.mock.calls.map(
+      ([, options]) => options.filters
+    );
+    expect(filtersBySource).toEqual(
+      expect.arrayContaining([
+        {
+          time_cutoff: null,
+          tags: null,
+          document_set: null,
+          source_type: [ValidSources.Jira],
+        },
+        {
+          time_cutoff: null,
+          tags: null,
+          document_set: null,
+          source_type: [ValidSources.GoogleDrive],
+        },
+      ])
+    );
   });
 
-  it("uses an explicit refine filters object verbatim for single/multi select", async () => {
+  it("includes federated connectors in the fan-out alongside regular CC pairs", async () => {
+    setConnectedSources([ValidSources.Jira], [ValidSources.FederatedSlack]);
     const { result } = renderHook(() => useQueryController(), { wrapper });
 
-    // Establish a query so refineSearch has something to re-run.
     await act(async () => {
-      await result.current.submit("multi select query", jest.fn());
+      await result.current.submit("federated query", jest.fn());
     });
-    mockSearchDocuments.mockClear();
 
-    await act(async () => {
-      await result.current.refineSearch({
-        source_type: [ValidSources.Jira, ValidSources.GoogleDrive],
+    expect(mockSearchDocuments).toHaveBeenCalledTimes(2);
+    const queriedSources = mockSearchDocuments.mock.calls.map(
+      ([, options]) => options.filters.source_type[0]
+    );
+    expect(queriedSources).toEqual(
+      expect.arrayContaining([ValidSources.Jira, ValidSources.FederatedSlack])
+    );
+  });
+
+  it("merges per-source results sorted by score and records a per-source count", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
+    mockSearchDocuments.mockImplementation((_query, options) => {
+      const source = options.filters.source_type[0] as ValidSources;
+      if (source === ValidSources.Jira) {
+        return Promise.resolve({
+          all_executed_queries: [],
+          search_docs: [
+            makeDoc("jira-1", ValidSources.Jira, 0.4),
+            makeDoc("jira-2", ValidSources.Jira, 0.9),
+          ],
+          llm_selected_doc_ids: null,
+          error: null,
+        });
+      }
+      return Promise.resolve({
+        all_executed_queries: [],
+        search_docs: [makeDoc("gdrive-1", ValidSources.GoogleDrive, 0.7)],
+        llm_selected_doc_ids: null,
+        error: null,
       });
     });
 
-    expect(mockSearchDocuments).toHaveBeenCalledTimes(1);
-    const [, options] = mockSearchDocuments.mock.calls[0]!;
-    expect(options.filters).toEqual({
-      source_type: [ValidSources.Jira, ValidSources.GoogleDrive],
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    await act(async () => {
+      await result.current.submit("merge query", jest.fn());
+    });
+
+    expect(result.current.searchResults.map((d) => d.document_id)).toEqual([
+      "jira-2",
+      "gdrive-1",
+      "jira-1",
+    ]);
+    expect(result.current.sourceCounts).toEqual({
+      [ValidSources.Jira]: 2,
+      [ValidSources.GoogleDrive]: 1,
     });
   });
 
-  it("clears the scope when an explicit refine filters object sets source_type: null", async () => {
+  it("surfaces an error if any per-source search fails", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
+    mockSearchDocuments.mockImplementation((_query, options) => {
+      const source = options.filters.source_type[0] as ValidSources;
+      if (source === ValidSources.Jira) {
+        return Promise.resolve({
+          all_executed_queries: [],
+          search_docs: [],
+          llm_selected_doc_ids: null,
+          error: "Jira search failed",
+        });
+      }
+      return emptySearchResponse();
+    });
+
     const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    await act(async () => {
+      await result.current.submit("erroring query", jest.fn());
+    });
+
+    expect(result.current.error).toBe("Jira search failed");
+    expect(result.current.searchResults).toEqual([]);
+    expect(result.current.sourceCounts).toEqual({});
+  });
+
+  it("selecting/clearing a source filter is client-side only and never re-queries", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
+    const { result } = renderHook(() => useQueryController(), { wrapper });
+
+    await act(async () => {
+      await result.current.submit("client filter query", jest.fn());
+    });
+    mockSearchDocuments.mockClear();
 
     act(() => {
       result.current.applySourceFilter([ValidSources.Jira]);
     });
+    expect(result.current.sourceFilter).toEqual([ValidSources.Jira]);
 
-    await act(async () => {
-      await result.current.submit("clear query", jest.fn());
-    });
-    mockSearchDocuments.mockClear();
-
-    // Simulates SearchUI's Clear action: applySourceFilter([]) then an
-    // explicit refine with source_type: null. The explicit object must win
-    // outright — it must NOT fall back to the (still-populated at this
-    // instant) ref via `??`, which was the pre-fix "clear" bug.
     act(() => {
       result.current.applySourceFilter([]);
     });
-    await act(async () => {
-      await result.current.refineSearch({ source_type: null });
-    });
-
-    expect(mockSearchDocuments).toHaveBeenCalledTimes(1);
-    const [, options] = mockSearchDocuments.mock.calls[0]!;
-    expect(options.filters).toEqual({ source_type: null });
     expect(result.current.sourceFilter).toEqual([]);
+
+    expect(mockSearchDocuments).not.toHaveBeenCalled();
   });
 
-  it("toggling a source off narrows an explicit refine to the remaining selection", async () => {
+  it("refineSearch (e.g. a time-filter change) re-runs the full fan-out across every source", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
     const { result } = renderHook(() => useQueryController(), { wrapper });
 
-    act(() => {
-      result.current.applySourceFilter([
-        ValidSources.Jira,
-        ValidSources.GoogleDrive,
-      ]);
-    });
     await act(async () => {
-      await result.current.submit("toggle query", jest.fn());
+      await result.current.submit("initial query", jest.fn());
     });
     mockSearchDocuments.mockClear();
 
-    // Toggling GoogleDrive off, mirroring SearchUI's handleSourceToggle.
-    const next = [ValidSources.Jira];
-    act(() => {
-      result.current.applySourceFilter(next);
-    });
     await act(async () => {
-      await result.current.refineSearch({ source_type: next });
+      await result.current.refineSearch({ time_cutoff: "2026-01-01T00:00:00Z" });
     });
 
-    expect(mockSearchDocuments).toHaveBeenCalledTimes(1);
-    const [, options] = mockSearchDocuments.mock.calls[0]!;
-    expect(options.filters).toEqual({ source_type: [ValidSources.Jira] });
-    expect(result.current.sourceFilter).toEqual([ValidSources.Jira]);
+    expect(mockSearchDocuments).toHaveBeenCalledTimes(2);
+    for (const [, options] of mockSearchDocuments.mock.calls) {
+      expect(options.filters.time_cutoff).toBe("2026-01-01T00:00:00Z");
+    }
   });
 
-  it("resets the selection to all-sources on session change", async () => {
+  it("resets sourceFilter and sourceCounts to empty on session change", async () => {
+    setConnectedSources([ValidSources.Jira, ValidSources.GoogleDrive]);
     const { result } = renderHook(() => useQueryController(), { wrapper });
 
     act(() => {
       result.current.applySourceFilter([ValidSources.Jira]);
     });
-    expect(result.current.sourceFilter).toEqual([ValidSources.Jira]);
+    await act(async () => {
+      await result.current.submit("pre-reset query", jest.fn());
+    });
+    expect(result.current.sourceCounts).not.toEqual({});
 
     act(() => {
       result.current.reset();
     });
+
     expect(result.current.sourceFilter).toEqual([]);
-
-    await act(async () => {
-      await result.current.submit("post-reset query", jest.fn());
-    });
-
-    expect(mockSearchDocuments).toHaveBeenCalledTimes(1);
-    const [, options] = mockSearchDocuments.mock.calls[0]!;
-    expect(options.filters).toEqual({ source_type: null });
+    expect(result.current.sourceCounts).toEqual({});
   });
 });

@@ -97,9 +97,9 @@ services:
     environment:
       - bootstrap.memory_lock=false
 
-  inference_model_server:
-    ports:
-      - "${MODEL_SERVER_HOST_PORT:-9000}:9000"
+  # inference_model_server:
+  #   ports:
+  #     - "${MODEL_SERVER_HOST_PORT:-9000}:9000"
 
   cache:
     ports:

@@ -9,6 +9,8 @@ import {
 } from "@/lib/search/interfaces";
 import { classifyQuery, searchDocuments } from "@/ee/lib/search/svc";
 import useAppFocus from "@/hooks/useAppFocus";
+import useCCPairs from "@/hooks/useCCPairs";
+import { useFederatedConnectors } from "@/lib/hooks";
 import { useTierAtLeast } from "@/hooks/useTierAtLeast";
 import { Tier } from "@/lib/settings/types";
 import { useIsSearchModeAvailable } from "@/lib/settings/hooks";
@@ -77,31 +79,64 @@ export function QueryControllerProvider({
   const [searchResults, setSearchResults] = useState<SearchDocWithContent[]>(
     []
   );
+  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>(
+    {}
+  );
   const [llmSelectedDocIds, setLlmSelectedDocIds] = useState<string[] | null>(
     null
   );
   const [error, setError] = useState<string | null>(null);
 
-  // ── Search-mode source filter (session-scoped) ─────────────────────────
-  // `sourceFilter` is the canonical, render-visible selection. `sourceFilterRef`
-  // is a synchronous mirror used only so `submit()` (the bar-query path, which
-  // is called with no explicit filters) can read the *current* selection
-  // without waiting for a state update to flush. `applySourceFilter` is the
-  // ONLY place that writes either of them — never call `setSourceFilter`
-  // directly anywhere else, or the ref and state can desync.
+  // ── Search-mode source filter (session-scoped, display-only) ───────────
+  // `sourceFilter` only controls which sources are *displayed* — it is
+  // applied client-side in SearchUI. It no longer affects what gets fetched:
+  // every search always fans out across every connected source (see
+  // `availableSourcesRef` below) so that `sourceCounts` stays accurate for
+  // every source regardless of the current selection.
   const [sourceFilter, setSourceFilter] = useState<ValidSources[]>([]);
-  const sourceFilterRef = useRef<ValidSources[]>([]);
   const applySourceFilter = useCallback((next: ValidSources[]) => {
-    sourceFilterRef.current = next;
     setSourceFilter(next);
   }, []);
+
+  // ── Connected sources (for fan-out) ─────────────────────────────────────
+  // Every search queries each of these sources independently so that
+  // `sourceCounts` is always populated for every source, not just the
+  // currently selected one(s). Mirrors the source list AppPage computes for
+  // the picker's display metadata (regular CC pairs + federated connectors).
+  const { ccPairs } = useCCPairs();
+  const { data: federatedConnectorsData } = useFederatedConnectors();
+  const availableSources = useMemo<ValidSources[]>(() => {
+    const regular = ccPairs.map((pair) => pair.source);
+    const federated = (federatedConnectorsData ?? []).map(
+      (connector) => connector.source
+    );
+    return Array.from(new Set([...regular, ...federated]));
+  }, [ccPairs, federatedConnectorsData]);
+  // Synchronous mirror so `performSearch` (a stable useCallback) always reads
+  // the latest connected sources without needing to be recreated on change.
+  const availableSourcesRef = useRef<ValidSources[]>([]);
+  useEffect(() => {
+    availableSourcesRef.current = availableSources;
+  }, [availableSources]);
 
   // Abort controllers for in-flight requests
   const classifyAbortRef = useRef<AbortController | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
 
   /**
-   * Perform document search (pure data-fetching, no phase side effects)
+   * Perform document search (pure data-fetching, no phase side effects).
+   *
+   * Fans out one request per connected source in parallel (ignoring any
+   * `source_type` on `filters` — source scoping is applied client-side in
+   * SearchUI), then merges the results by score and records each source's
+   * own hit count in `sourceCounts`. This guarantees every source's count is
+   * always accurate, independent of which source(s) are currently selected
+   * for display, and that "all sources" actually surfaces every source
+   * instead of letting one source's stronger keyword/semantic scores crowd
+   * out the rest of a single pooled top-N.
+   *
+   * Falls back to a single unscoped search when there are no connected
+   * sources yet (e.g. a fresh deployment with no connectors configured).
    */
   const performSearch = useCallback(
     async (searchQuery: string, filters?: BaseFilters): Promise<void> => {
@@ -112,41 +147,80 @@ export function QueryControllerProvider({
       const controller = new AbortController();
       searchAbortRef.current = controller;
 
-      // Scope resolution happens at the whole-object level, never by merging
-      // individual fields:
-      // - Refine path (caller passed a `filters` object, e.g. from SearchUI's
-      //   buildFilters()): use it verbatim, including `source_type: null` on
-      //   an explicit clear — that must actually clear the scope.
-      // - Bar-submit path (no `filters` object, i.e. a brand-new query typed
-      //   in the input bar): synthesize the scope from the current session
-      //   selection via the synchronous ref.
-      const effectiveFilters: BaseFilters =
-        filters ??
-        (sourceFilterRef.current.length > 0
-          ? { source_type: sourceFilterRef.current }
-          : { source_type: null });
+      const baseFilters: BaseFilters = {
+        time_cutoff: filters?.time_cutoff ?? null,
+        tags: filters?.tags ?? null,
+        document_set: filters?.document_set ?? null,
+        source_type: null,
+      };
+
+      const sourcesToQuery = availableSourcesRef.current;
 
       try {
-        const response: SearchFullResponse = await searchDocuments(
-          searchQuery,
-          {
-            filters: effectiveFilters,
-            numHits: 30,
-            includeContent: false,
-            signal: controller.signal,
+        if (sourcesToQuery.length === 0) {
+          const response: SearchFullResponse = await searchDocuments(
+            searchQuery,
+            {
+              filters: baseFilters,
+              numHits: 30,
+              includeContent: false,
+              signal: controller.signal,
+            }
+          );
+
+          if (response.error) {
+            setError(response.error);
+            setSearchResults([]);
+            setSourceCounts({});
+            setLlmSelectedDocIds(null);
+            return;
           }
+
+          setError(null);
+          setSearchResults(response.search_docs);
+          setSourceCounts({});
+          setLlmSelectedDocIds(response.llm_selected_doc_ids ?? null);
+          return;
+        }
+
+        const responses = await Promise.all(
+          sourcesToQuery.map((source) =>
+            searchDocuments(searchQuery, {
+              filters: { ...baseFilters, source_type: [source] },
+              numHits: 30,
+              includeContent: false,
+              signal: controller.signal,
+            })
+          )
         );
 
-        if (response.error) {
-          setError(response.error);
+        const firstError = responses.find((r) => r.error)?.error;
+        if (firstError) {
+          setError(firstError);
           setSearchResults([]);
+          setSourceCounts({});
           setLlmSelectedDocIds(null);
           return;
         }
 
+        const counts: Record<string, number> = {};
+        const allDocs: SearchDocWithContent[] = [];
+        let llmSelected: string[] | null = null;
+        sourcesToQuery.forEach((source, i) => {
+          const docs = responses[i]!.search_docs;
+          counts[source] = docs.length;
+          allDocs.push(...docs);
+          const selectedForSource = responses[i]!.llm_selected_doc_ids;
+          if (selectedForSource) {
+            llmSelected = [...(llmSelected ?? []), ...selectedForSource];
+          }
+        });
+        allDocs.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
         setError(null);
-        setSearchResults(response.search_docs);
-        setLlmSelectedDocIds(response.llm_selected_doc_ids ?? null);
+        setSearchResults(allDocs);
+        setSourceCounts(counts);
+        setLlmSelectedDocIds(llmSelected);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           throw err;
@@ -154,6 +228,7 @@ export function QueryControllerProvider({
 
         setError("Document search failed. Please try again.");
         setSearchResults([]);
+        setSourceCounts({});
         setLlmSelectedDocIds(null);
       }
     },
@@ -219,6 +294,7 @@ export function QueryControllerProvider({
       ) {
         setState({ phase: "chat" });
         setSearchResults([]);
+        setSourceCounts({});
         setLlmSelectedDocIds(null);
         onChat(submitQuery);
         return;
@@ -250,6 +326,7 @@ export function QueryControllerProvider({
         } else {
           setState({ phase: "chat" });
           setSearchResults([]);
+          setSourceCounts({});
           setLlmSelectedDocIds(null);
           onChat(submitQuery);
         }
@@ -260,6 +337,7 @@ export function QueryControllerProvider({
 
         setState({ phase: "chat" });
         setSearchResults([]);
+        setSourceCounts({});
         setLlmSelectedDocIds(null);
         onChat(submitQuery);
       }
@@ -307,6 +385,7 @@ export function QueryControllerProvider({
     setQuery(null);
     setState({ phase: "idle", appMode: appModeRef.current });
     setSearchResults([]);
+    setSourceCounts({});
     setLlmSelectedDocIds(null);
     setError(null);
     // New session (or first mount) always starts scoped to all sources.
@@ -318,6 +397,7 @@ export function QueryControllerProvider({
       state,
       setAppMode,
       searchResults,
+      sourceCounts,
       llmSelectedDocIds,
       error,
       sourceFilter,
@@ -330,6 +410,7 @@ export function QueryControllerProvider({
       state,
       setAppMode,
       searchResults,
+      sourceCounts,
       llmSelectedDocIds,
       error,
       sourceFilter,

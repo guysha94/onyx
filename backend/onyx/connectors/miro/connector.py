@@ -234,8 +234,14 @@ class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
                         "Invalid Miro access token (HTTP 401)."
                     )
                 if response.status_code == 403:
+                    # Miro's 403 body names the specific missing scope (e.g.
+                    # `{"message": "Required scopes: boards:read"}`), which is
+                    # essential for diagnosing which of the several distinct
+                    # API calls this connector makes (board listing vs. the
+                    # org-member perm-sync probe) is the one lacking access.
                     raise InsufficientPermissionsError(
-                        "Insufficient permissions for the Miro API (HTTP 403)."
+                        "Insufficient permissions for the Miro API (HTTP 403) "
+                        f"calling {url}: {response.text}"
                     )
                 if not response.ok:
                     raise RuntimeError(

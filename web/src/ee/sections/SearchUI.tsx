@@ -60,6 +60,7 @@ export default function SearchUI({
   const {
     state,
     searchResults: results,
+    sourceCounts,
     llmSelectedDocIds,
     error,
     sourceFilter,
@@ -107,21 +108,18 @@ export default function SearchUI({
     filtered: filteredSources,
   } = useFilter(sources, sourceExtractor);
 
-  // Build the combined server-side filters from current state. Scope is
-  // resolved at the whole-object level: every call site passes the complete,
-  // explicit set of sources it wants applied (including `[]` for "all
-  // sources"), never relying on a partial merge with stale state.
+  // Build the server-side (time/tag) filters from current state. Source
+  // scoping is NOT included here — it's applied client-side below against
+  // the always-unscoped `results`, so that every source's count stays
+  // accurate no matter which source(s) are selected for display.
   const buildFilters = (
     overrides: {
       time?: TimeFilter | null;
       tags?: Tag[];
-      sources?: ValidSources[];
     } = {}
   ): BaseFilters => {
     const time = overrides.time !== undefined ? overrides.time : timeFilter;
     const tags = overrides.tags !== undefined ? overrides.tags : selectedTags;
-    const selectedSources =
-      overrides.sources !== undefined ? overrides.sources : sourceFilter;
     const cutoff = time ? getTimeFilterDate(time) : null;
     return {
       time_cutoff: cutoff?.toISOString() ?? null,
@@ -129,7 +127,6 @@ export default function SearchUI({
         tags.length > 0
           ? tags.map((t) => ({ tag_key: t.tag_key, tag_value: t.tag_value }))
           : null,
-      source_type: selectedSources.length > 0 ? selectedSources : null,
     };
   };
 
@@ -141,10 +138,16 @@ export default function SearchUI({
   // Create a set for fast lookup of LLM-selected docs
   const llmSelectedSet = new Set(llmSelectedDocIds ?? []);
 
-  // Sort results: LLM-selected first, then by score. Source scoping is
-  // already applied server-side, so no client-side filtering here.
+  // Filter by the selected source(s) (client-side — `results` always covers
+  // every connected source, see QueryControllerProvider), then sort:
+  // LLM-selected first, then by score.
   const filteredAndSortedResults = useMemo(() => {
-    return [...results].sort((a, b) => {
+    const scoped =
+      sourceFilter.length > 0
+        ? results.filter((doc) => sourceFilter.includes(doc.source_type))
+        : results;
+
+    return [...scoped].sort((a, b) => {
       const aSelected = llmSelectedSet.has(a.document_id);
       const bSelected = llmSelectedSet.has(b.document_id);
 
@@ -153,7 +156,7 @@ export default function SearchUI({
 
       return (b.score ?? 0) - (a.score ?? 0);
     });
-  }, [results, llmSelectedSet]);
+  }, [results, sourceFilter, llmSelectedSet]);
 
   // Pagination
   const totalPages = Math.max(
@@ -165,35 +168,25 @@ export default function SearchUI({
     return filteredAndSortedResults.slice(start, start + RESULTS_PER_PAGE);
   }, [filteredAndSortedResults, currentPage]);
 
-  // Count of results per source in the *current* result set, used to show
-  // "in current results" counts next to each source in the picker.
-  const sourceCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const doc of results) {
-      if (doc.source_type) {
-        counts.set(doc.source_type, (counts.get(doc.source_type) ?? 0) + 1);
-      }
-    }
-    return counts;
-  }, [results]);
-
+  // Selecting/deselecting a source only changes what's *displayed* — it
+  // never re-queries the server, so every source's count (from
+  // `sourceCounts`, always covering every connected source) never changes
+  // as a result of the current selection.
   const handleSourceToggle = (source: ValidSources) => {
     const next = sourceFilter.includes(source)
       ? sourceFilter.filter((s) => s !== source)
       : [...sourceFilter, source];
     applySourceFilter(next);
     setCurrentPage(1);
-    onRefineSearch(buildFilters({ sources: next }));
   };
 
   const handleSourceClear = () => {
     applySourceFilter([]);
     setCurrentPage(1);
     setSourceFilterOpen(false);
-    onRefineSearch(buildFilters({ sources: [] }));
   };
 
-  const showEmpty = !error && results.length === 0;
+  const showEmpty = !error && filteredAndSortedResults.length === 0;
 
   // Show a centered spinner while search is in-flight (after all hooks)
   if (state.phase === "searching") {
@@ -350,7 +343,7 @@ export default function SearchUI({
                     const isSelected = sourceFilter.includes(
                       source.internalName
                     );
-                    const count = sourceCounts.get(source.internalName) ?? 0;
+                    const count = sourceCounts[source.internalName] ?? 0;
                     return (
                       <LineItemButton
                         key={source.internalName}
@@ -383,7 +376,7 @@ export default function SearchUI({
           <div className="flex-1 flex flex-col justify-end gap-3">
             <Section alignItems="start">
               <Text text03 mainUiMuted>
-                {results.length} Results
+                {filteredAndSortedResults.length} Results
               </Text>
             </Section>
 
