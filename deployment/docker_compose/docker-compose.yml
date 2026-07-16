@@ -376,6 +376,7 @@ services:
   opensearch:
     image: ${BASE_IMAGE_REGISTRY:-docker.io}/opensearchproject/opensearch:3.6.0
     restart: unless-stopped
+    container_name: opensearch
     # OpenSearch is the search backend and is enabled by default. To run against
     # an external OpenSearch instance, set OPENSEARCH_HOST in your env and
     # remove this service from the compose file (or skip it via the service list

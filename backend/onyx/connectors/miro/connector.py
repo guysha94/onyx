@@ -10,6 +10,7 @@ findable via the vision-LLM caption plus board/frame context words.
 See `README.md` in this directory for the auth setup and design rationale.
 """
 import html
+import json
 import os
 import re
 from collections.abc import Generator
@@ -64,6 +65,33 @@ _MIRO_OAUTH_TOKEN_URL = "https://api.miro.com/v1/oauth-token"
 # (as opposed to "private"/"no_access"). Used to translate a board's sharing
 # policy into an Onyx `ExternalAccess`.
 _ACCESS_LEVELS_GRANTING = {"view", "comment", "edit"}
+
+# Miro error code returned when the token's user is not a member of the board
+# being fetched (GET /v2/boards/{id}/items).  This is a per-board condition —
+# the admin token can list private boards via Content Admin but cannot read
+# their contents.  Boards that respond with this code are skipped (fail-closed)
+# rather than aborting the whole sync/indexing run.  See the README for context.
+_MIRO_BOARD_FORBIDDEN_CODE = "6.0108"
+
+
+class BoardAccessForbiddenError(Exception):
+    """Raised when Miro returns 403 code 6.0108 on a board-items request.
+
+    Distinct from `InsufficientPermissionsError` (missing OAuth scope, systemic):
+    this is a per-board condition that should be handled by skipping the board,
+    not by aborting the entire run.
+    """
+
+
+def _extract_miro_error_code(response_text: str) -> str | None:
+    """Return the Miro `code` field from a 403 response body, or None if unparseable."""
+    try:
+        body = json.loads(response_text)
+        code = body.get("code")
+        return str(code) if code is not None else None
+    except Exception:
+        return None
+
 
 # Prefix for the Onyx external-group id that represents a Miro team. Kept in
 # sync between `retrieve_all_slim_docs_perm_sync` (which tags assets with the
@@ -234,8 +262,17 @@ class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
                         "Invalid Miro access token (HTTP 401)."
                     )
                 if response.status_code == 403:
+                    error_code = _extract_miro_error_code(response.text)
+                    if error_code == _MIRO_BOARD_FORBIDDEN_CODE:
+                        raise BoardAccessForbiddenError(
+                            f"Board access forbidden (Miro code {_MIRO_BOARD_FORBIDDEN_CODE}) "
+                            f"calling {url}: {response.text}"
+                        )
+                    # Any other 403 (e.g. missing OAuth scope) is a systemic
+                    # misconfig — surface the full body for diagnosis.
                     raise InsufficientPermissionsError(
-                        "Insufficient permissions for the Miro API (HTTP 403)."
+                        "Insufficient permissions for the Miro API (HTTP 403) "
+                        f"calling {url}: {response.text}"
                     )
                 if not response.ok:
                     raise RuntimeError(
@@ -243,7 +280,11 @@ class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
                         f"(status={response.status_code}): {response.text}"
                     )
                 return cast(dict[str, Any], response.json())
-            except (CredentialExpiredError, InsufficientPermissionsError):
+            except (
+                CredentialExpiredError,
+                InsufficientPermissionsError,
+                BoardAccessForbiddenError,
+            ):
                 raise
             except Exception as exc:
                 if attempt == _NUM_RETRIES - 1:
@@ -587,7 +628,17 @@ class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
         board_id = str(board["id"])
         board_name = board.get("name") or f"Board {board_id}"
 
-        items = list(self._iter_board_items(board_id))
+        try:
+            items = list(self._iter_board_items(board_id))
+        except BoardAccessForbiddenError:
+            logger.warning(
+                "Skipping Miro board %s during indexing: board is private or not shared "
+                "with the connector token's user (403 code %s). Items cannot be read.",
+                board_id,
+                _MIRO_BOARD_FORBIDDEN_CODE,
+            )
+            return batch
+
         frame_titles, frame_texts = self._build_frame_context(items)
 
         for item in items:
@@ -653,13 +704,21 @@ class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     # ------------------------------------------------------------------ #
     # Permission syncing (EE). FORK: miro.
     #
-    # Miro access is team-based: a board grants access via its
-    # `sharingPolicy` (org-wide / team / private), and member emails come from
-    # the org-level API. So each asset is tagged with its board's team as an
-    # Onyx external group (`miro_team_<team_id>`), and the EE `miro_group_sync`
-    # resolves that group to member emails. Board-member-level (per-individual)
-    # shares are not resolvable to emails (different id space with no email
-    # endpoint), so private boards fall back to admin-only.
+    # ACL model:
+    #   org-wide / public-link -> Onyx `public` (every Onyx user).
+    #     SAFE because of a deployment invariant: every Onyx user on this
+    #     platform is also a member of the Miro org, so org-wide boards are
+    #     genuinely accessible to all Onyx users.  If that invariant ever
+    #     stops holding, this mapping must be changed to an org-level group.
+    #   team access -> `miro_team_<team_id>` Onyx external group.
+    #     The EE `miro_group_sync` resolves the group to member emails.
+    #   private-to-individuals -> admin-only (fail-closed).
+    #     Per-board member IDs live in a separate user-id space with no email
+    #     endpoint, so individual grants cannot be resolved.  Deferred future
+    #     work: confirm Miro exposes per-board member enumeration on our plan
+    #     tier, then reuse `get_team_member_email_map`'s id->email join.
+    #   unreadable-private (403 code 6.0108) -> skipped; assets don't exist
+    #     in Onyx.  No leak; fail-closed coverage gap documented.
     # ------------------------------------------------------------------ #
 
     def _iter_paginated(
@@ -790,22 +849,35 @@ class MiroConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             board_id = str(board["id"])
             external_access = self._board_external_access(board)
 
-            for item in self._iter_board_items(board_id):
-                if item.get("type") != "image":
-                    continue
-                if not (item.get("data") or {}).get("imageUrl"):
-                    continue
+            try:
+                for item in self._iter_board_items(board_id):
+                    if item.get("type") != "image":
+                        continue
+                    if not (item.get("data") or {}).get("imageUrl"):
+                        continue
 
-                item_id = str(item["id"])
-                batch.append(
-                    SlimDocument(
-                        id=f"miro__{board_id}__{item_id}",
-                        external_access=external_access,
+                    item_id = str(item["id"])
+                    batch.append(
+                        SlimDocument(
+                            id=f"miro__{board_id}__{item_id}",
+                            external_access=external_access,
+                        )
                     )
+                    if len(batch) >= self.batch_size:
+                        yield batch
+                        batch = []
+            except BoardAccessForbiddenError:
+                # Private board whose contents the token cannot read.
+                # Skip it so the rest of the sync completes.  The
+                # generic_doc_sync missing-doc pass will fail-closed any
+                # docs that were previously indexed from this board.
+                logger.warning(
+                    "Skipping Miro board %s during perm-sync: board is private or not "
+                    "shared with the connector token's user (403 code %s).",
+                    board_id,
+                    _MIRO_BOARD_FORBIDDEN_CODE,
                 )
-                if len(batch) >= self.batch_size:
-                    yield batch
-                    batch = []
+                continue
 
         if batch:
             yield batch

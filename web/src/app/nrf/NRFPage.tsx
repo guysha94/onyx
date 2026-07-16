@@ -8,9 +8,12 @@ import { AuthType } from "@/lib/constants";
 import AppInputBar, { AppInputBarHandle } from "@/sections/input/AppInputBar";
 import { Button } from "@opal/components";
 import Modal from "@/refresh-components/Modal";
-import { useFilters, useLlmManager } from "@/lib/hooks";
+import { useFederatedConnectors, useFilters, useLlmManager } from "@/lib/hooks";
 import Dropzone from "react-dropzone";
 import { useSendMessageToParent, getPanelOrigin } from "@/lib/extension/utils";
+import useCCPairs from "@/hooks/useCCPairs";
+import { getSourceMetadata } from "@/lib/sources";
+import { FederatedConnectorDetail } from "@/lib/types";
 import { useNRFPreferences } from "@/components/context/NRFPreferencesContext";
 import SidePanelHeader from "@/app/nrf/side-panel/SidePanelHeader";
 import { CHROME_MESSAGE } from "@/lib/extension/constants";
@@ -38,7 +41,7 @@ import { Spacer } from "@opal/components";
 import { DEFAULT_CONTEXT_TOKENS } from "@/lib/constants";
 import { SvgUser, SvgMenu, SvgAlertTriangle } from "@opal/icons";
 import { useAppBackground } from "@/providers/AppBackgroundProvider";
-import { MinimalOnyxDocument } from "@/lib/search/interfaces";
+import { MinimalOnyxDocument, SourceMetadata } from "@/lib/search/interfaces";
 import DocumentsSidebar from "@/sections/document-sidebar/DocumentsSidebar";
 import PreviewModal from "@/sections/modals/PreviewModal";
 import { personaIncludesRetrieval } from "@/app/app/services/lib";
@@ -413,6 +416,32 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
     []
   );
 
+  // Sources available for the Search-mode source filter (mirrors AppPage)
+  const { ccPairs } = useCCPairs();
+  const { data: federatedConnectorsData } = useFederatedConnectors();
+  const sources: SourceMetadata[] = useMemo(() => {
+    const uniqueSources = Array.from(
+      new Set(ccPairs.map((ccPair) => ccPair.source))
+    );
+    const regularSources = uniqueSources.map((source) =>
+      getSourceMetadata(source)
+    );
+
+    const federatedSources =
+      federatedConnectorsData?.map((connector: FederatedConnectorDetail) =>
+        getSourceMetadata(connector.source)
+      ) || [];
+
+    const allSources = [...regularSources, ...federatedSources];
+    return allSources.reduce((acc, source) => {
+      const existing = acc.find((s) => s.internalName === source.internalName);
+      if (!existing) {
+        acc.push(source);
+      }
+      return acc;
+    }, [] as SourceMetadata[]);
+  }, [ccPairs, federatedConnectorsData]);
+
   return (
     <div
       className={cn(
@@ -562,7 +591,10 @@ export default function NRFPage({ isSidePanel = false }: NRFPageProps) {
             {isSearch && (
               <div className="flex-1 w-full max-w-(--app-page-main-content-width) px-4 min-h-0 overflow-auto">
                 <Spacer rem={0.75} />
-                <SearchUI onDocumentClick={handleSearchDocumentClick} />
+                <SearchUI
+                  onDocumentClick={handleSearchDocumentClick}
+                  sources={sources}
+                />
               </div>
             )}
 

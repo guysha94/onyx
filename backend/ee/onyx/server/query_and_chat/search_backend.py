@@ -47,6 +47,15 @@ logger = setup_logger()
 
 router = APIRouter(prefix="/search")
 
+# Defense-in-depth bounds for `SendSearchQueryRequest.num_hits` (the Search UI
+# already clamps its "Max results" control to this same range client-side).
+# Kept as a clamp rather than a rejecting Pydantic `Field` constraint so
+# out-of-range values from older/external clients degrade gracefully instead
+# of erroring, preserving `SendSearchQueryRequest`'s backwards-compatibility
+# guarantee.
+MIN_SEARCH_NUM_HITS = 1
+MAX_SEARCH_NUM_HITS = 500
+
 
 @router.post("/search-flow-classification")
 def search_flow_classification(
@@ -107,6 +116,10 @@ def handle_send_search_message(
 
     if request.hybrid_alpha is None and ONYX_SEARCH_UI_USES_OPENSEARCH_KEYWORD_SEARCH:
         request.hybrid_alpha = 0.0
+
+    request.num_hits = min(
+        max(request.num_hits, MIN_SEARCH_NUM_HITS), MAX_SEARCH_NUM_HITS
+    )
 
     # Non-streaming path
     if not request.stream:

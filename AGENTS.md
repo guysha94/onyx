@@ -405,6 +405,8 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - When fixing Docker build issues for web workspace packages, put fixes in the Dockerfile rather than changing `package.json` scripts (scripts must stay compatible with upstream/main for merging).
 - Miro/image assets must have meaningful per-asset titles (never placeholder filenames like `4.png`/`image.png`) and clear, highly informative vision captions (subject, style, colours, layout — who/what/where/when/how); store the image summary in `doc_summary` and vector it into both the title and content vectors.
 - Search mode should support filtering results by selected sources (default: all) and a configurable max-results limit; admin should support bulk pause/resume and bulk delete of connectors by vendor (Jira AI-94/AI-95/AI-96 under AI-61).
+- User performs git operations (add/commit/push/branch create-delete) themselves — provide the exact commands or commit message to run rather than executing state-mutating git commands, unless explicitly asked to run them.
+- Feature/fix branches for this repo are created from (and merged back into) the `prod` branch, not `main`.
 - Never commit GCP/Vertex `service_account.json` (or other cloud key files); keep them local and gitignored only.
 - Prefer OpenAI-Compatible (not a dedicated vLLM provider tile) for self-hosted vLLM used as Contextual Retrieval and Captioning LLMs; models need visibility plus Text & Image / VISION (`supports_image_input`) to clear Index Settings Image Processing and appear in Captioning pickers.
 - Agent Knowledge should let users select source-specific scopes (Jira/Confluence spaces or projects, Monday workspaces, GitHub repos), not only Google Drive folders.
