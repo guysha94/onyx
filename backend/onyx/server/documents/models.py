@@ -647,6 +647,8 @@ class DocsCountOperator(str, Enum):
 
 class ConnectorIndexingStatusLite(BaseModel):
     cc_pair_id: int
+    connector_id: int
+    credential_id: int
     name: str
     source: DocumentSource
     access_type: AccessType

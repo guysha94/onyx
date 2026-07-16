@@ -1218,6 +1218,8 @@ def _get_connector_indexing_status_lite(
 
     return ConnectorIndexingStatusLite(
         cc_pair_id=cc_pair.id,
+        connector_id=connector.id,
+        credential_id=credential.id,
         name=cc_pair.name,
         source=cc_pair.connector.source,
         access_type=cc_pair.access_type,

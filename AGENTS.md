@@ -404,19 +404,20 @@ to the codebase can be found in the "Engineering Best Practices" section of
 - Windows dev host: mise deployment tasks should use PowerShell (`run_windows`), not bash.
 - When fixing Docker build issues for web workspace packages, put fixes in the Dockerfile rather than changing `package.json` scripts (scripts must stay compatible with upstream/main for merging).
 - Miro/image assets must have meaningful per-asset titles (never placeholder filenames like `4.png`/`image.png`) and clear, highly informative vision captions (subject, style, colours, layout — who/what/where/when/how); store the image summary in `doc_summary` and vector it into both the title and content vectors.
+- User performs git operations (add/commit/push/branch create-delete) themselves — provide the exact commands or commit message to run rather than executing state-mutating git commands, unless explicitly asked to run them.
+- Feature/fix branches for this repo are created from (and merged back into) the `prod` branch, not `main`.
+- Search mode should support filtering results by selected sources (default: all) and a configurable max-results limit; admin should support bulk pause/resume and bulk delete of connectors by vendor (Jira AI-94/AI-95/AI-96 under AI-61).
 
 ## Learned Workspace Facts
 
-- SuperPlay homelab fork of Onyx for an internal enterprise AI search platform; parent initiative is Jira AI-61.
-- Docker Compose deployment config lives at `deployment/docker_compose/.env`; env vars apply at container creation — run `docker compose up -d --force-recreate api_server web_server` after changes.
-- `mise dev` is the command used to start the full Docker Compose Onyx stack locally.
+- SuperPlay homelab fork of Onyx for an internal enterprise AI search platform; parent initiative is Jira AI-61; production URL is `https://sp-ai-platform.superplay.dev` (`superplay.dev` DNS on Route 53).
+- Docker Compose config lives at `deployment/docker_compose/.env`; env vars apply at container creation — run `docker compose up -d --force-recreate api_server web_server` after changes. `mise.toml` tasks pass `--env-file .env` explicitly so the root `.env` (including `COMPOSE_PROFILES`) is honoured; without it Docker Compose reads `.env` only from `deployment/docker_compose/` and silently ignores profile vars.
+- `mise dev` starts the full Docker Compose stack locally. `minio` service is gated behind the `s3-filestore` profile; `FILE_STORE_BACKEND=s3` (default) requires it — set `COMPOSE_PROFILES=s3-filestore` in root `.env` or minio won't start and api_server crashes on boot.
 - Primary Atlassian/Jira instance is `superplaystudio.atlassian.net`.
 - Custom connector priorities include Monday.com, Miro, and Mixpanel; Monday.com connector work tracks Jira AI-69 and follows the Linear connector pattern. The Miro connector (branch `feat/AI-70-miro-connector`, Jira AI-70) indexes visual asset boards (images, screenshots, UI mockups, icons — no videos) for game production, targeting multimodal + spatial semantic search; Miro doc IDs use the format `miro__boardId__itemId`.
 - Custom source forks (e.g. Monday, Miro) are added via the fork pattern: register only in `backend/onyx/connectors/fork_registry.py` (never edit the body of `backend/onyx/connectors/registry.py`), tag any edits to shared/core files with `# FORK: <name>`, log changes in `FORK_CHANGES.md`, and use simple static API-token auth with `LoadConnector`/`PollConnector` rather than full OAuth for MVP scope.
 - Google OAuth redirect URI must be `{WEB_DOMAIN}/auth/oauth/callback`, with `WEB_DOMAIN` matching the browser URL exactly (scheme, host, port).
 - Homelab EE feature testing uses `ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=true` and `LICENSE_ENFORCEMENT_ENABLED=false` on api_server, celery workers, and web.
-- Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch).
-- Homelab production URL is `https://sp-ai-platform.superplay.dev` (`superplay.dev` DNS on Route 53); set `WEB_DOMAIN` accordingly in root and compose `.env` files.
 - `mise run dev:gpu` merges `docker-compose.dev-ssl.yml` for nginx on 80/443 with Let's Encrypt; one-time bootstrap via `mise run dev:gpu:init-certs`.
 - HTTPS/nginx DOMAIN config lives in `deployment/docker_compose/.env.nginx` (`CERTBOT_CHALLENGE=manual-dns` default); use `dev:gpu:init-certs` in an interactive terminal; `dev:gpu:bootstrap-nginx` if nginx lacks certs; `dev:gpu:check-ports` only for HTTP-01 fallback.
 - Onyx supports OpenSearch and Vespa as document-index backends; only one is active at runtime (this deployment uses OpenSearch at `https://localhost:9200`, self-signed cert + basic-auth admin; active chunk index `danswer_chunk_nomic_ai_nomic_embed_text_v1`, nomic-embed-text-v1 embeddings).

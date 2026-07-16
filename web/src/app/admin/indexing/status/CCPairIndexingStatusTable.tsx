@@ -46,8 +46,11 @@ import {
   SvgAlertTriangle,
 } from "@opal/icons";
 import { toast } from "@/hooks/useToast";
-import { bulkSetCCPairStatusForSource } from "@/lib/ccPair";
-import { bulkDeleteConnectorsForSource } from "@/lib/documentDeletion";
+import { bulkSetCCPairStatusForSource, setCCPairStatus } from "@/lib/ccPair";
+import {
+  bulkDeleteConnectorsForSource,
+  deleteCCPair,
+} from "@/lib/documentDeletion";
 import { ConfirmEntityModal } from "@/sections/modals/ConfirmEntityModal";
 import ConfirmationModalLayout from "@/refresh-components/layouts/ConfirmationModalLayout";
 
@@ -333,19 +336,67 @@ function ConnectorRow({
   ccPairsIndexingStatus,
   invisible,
   isEditable,
+  onActionComplete,
 }: {
   ccPairsIndexingStatus: ConnectorIndexingStatusLite;
   invisible?: boolean;
   isEditable: boolean;
+  onActionComplete?: () => void;
 }) {
   const router = useRouter();
   const businessTier = useTierAtLeast(Tier.BUSINESS);
+
+  const [actingType, setActingType] = useState<"status" | "delete" | null>(
+    null
+  );
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  const isActing = actingType !== null;
+  const isActive =
+    ccPairsIndexingStatus.cc_pair_status === ConnectorCredentialPairStatus.ACTIVE;
+  const isDeleting =
+    ccPairsIndexingStatus.cc_pair_status === ConnectorCredentialPairStatus.DELETING;
 
   const connectorUrl = `/admin/connector/${ccPairsIndexingStatus.cc_pair_id}`;
 
   const handleRowClick = (e: React.MouseEvent) => {
     navigateWithModifier(e, connectorUrl, router);
   };
+
+  async function handleToggleStatus() {
+    setActingType("status");
+    try {
+      await setCCPairStatus(
+        ccPairsIndexingStatus.cc_pair_id,
+        isActive
+          ? ConnectorCredentialPairStatus.PAUSED
+          : ConnectorCredentialPairStatus.ACTIVE,
+        onActionComplete
+      );
+    } finally {
+      setActingType(null);
+    }
+  }
+
+  async function handleDelete() {
+    setShowDeleteModal(false);
+    setActingType("delete");
+    try {
+      await deleteCCPair(
+        ccPairsIndexingStatus.connector_id,
+        ccPairsIndexingStatus.credential_id,
+        onActionComplete
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to schedule connector deletion"
+      );
+    } finally {
+      setActingType(null);
+    }
+  }
 
   return (
     <TableRow
@@ -401,9 +452,55 @@ function ConnectorRow({
       <TableCell>{ccPairsIndexingStatus.docs_indexed}</TableCell>
       <TableCell>
         {isEditable && (
-          <Tooltip tooltip="Manage Connector">
-            <Button icon={SvgSettings} prominence="tertiary" />
-          </Tooltip>
+          <div
+            className="flex items-center justify-end gap-x-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Tooltip tooltip={isActive ? "Pause Connector" : "Resume Connector"}>
+              <Button
+                icon={isActive ? SvgPauseCircle : SvgPlayCircle}
+                prominence="tertiary"
+                disabled={isActing || isDeleting}
+                onClick={handleToggleStatus}
+              />
+            </Tooltip>
+            <Tooltip
+              tooltip={
+                isActive
+                  ? "Pause the connector before deleting"
+                  : "Delete Connector"
+              }
+            >
+              <Button
+                icon={SvgTrash}
+                prominence="tertiary"
+                disabled={isActing || isDeleting || isActive}
+                onClick={() => setShowDeleteModal(true)}
+              />
+            </Tooltip>
+            <Tooltip tooltip="Manage Connector">
+              <Button
+                icon={SvgSettings}
+                prominence="tertiary"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  navigateWithModifier(e, connectorUrl, router);
+                }}
+              />
+            </Tooltip>
+
+            {showDeleteModal && (
+              <ConfirmEntityModal
+                danger
+                entityType="Connector"
+                entityName={ccPairsIndexingStatus.name}
+                additionalDetails="This schedules a deletion job for this connector, removing its indexed documents. This cannot be undone."
+                actionButtonText="Delete"
+                onClose={() => setShowDeleteModal(false)}
+                onSubmit={handleDelete}
+              />
+            )}
+          </div>
         )}
       </TableCell>
     </TableRow>
@@ -491,6 +588,8 @@ export function CCPairIndexingStatusTable({
           invisible
           ccPairsIndexingStatus={{
             cc_pair_id: 1,
+            connector_id: 1,
+            credential_id: 1,
             name: "Sample File Connector",
             cc_pair_status: ConnectorCredentialPairStatus.ACTIVE,
             last_status: "success",
@@ -560,6 +659,7 @@ export function CCPairIndexingStatusTable({
                             key={status.cc_pair_id}
                             ccPairsIndexingStatus={status}
                             isEditable={status.is_editable}
+                            onActionComplete={onActionComplete}
                           />
                         );
                       }

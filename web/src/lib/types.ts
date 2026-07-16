@@ -294,6 +294,8 @@ export interface ConnectorIndexingStatus<
 
 export interface ConnectorIndexingStatusLite {
   cc_pair_id: number;
+  connector_id: number;
+  credential_id: number;
   name: string;
   source: ValidSources;
   access_type: AccessType;
