@@ -1209,6 +1209,78 @@ def test_retrieve_confluence_spaces_server_stops_when_next_link_absent(
     assert len(mock_get_call_paths) == 2
 
 
+def test_retrieve_confluence_spaces_cloud_uses_api_v2_under_wiki_base(
+    mock_credentials_provider: mock.Mock,
+) -> None:
+    """wiki_base ``…/wiki`` must call ``api/v2/spaces``, not ``wiki/api/v2/spaces``.
+
+    atlassian-python-api joins with ``"/"``.join(strip("/")), so a leading
+    ``wiki/`` on the path produces ``…/wiki/wiki/api/v2/…`` which Confluence
+    answers with HTTP 202 + empty body.
+    """
+    client = OnyxConfluence(
+        is_cloud=True,
+        url="https://example.atlassian.net/wiki",
+        credentials_provider=mock_credentials_provider,
+        timeout=10,
+    )
+    mock_internal = mock.Mock()
+    mock_internal.url = client._url
+    client._confluence = mock_internal
+    client._kwargs = client.shared_base_kwargs
+
+    mock_internal.get.return_value = _create_mock_response(
+        200,
+        {"results": [{"key": "ENG"}], "_links": {}},
+        url="api/v2/spaces?limit=1",
+    )
+
+    returned = list(client.retrieve_confluence_spaces(limit=1))
+
+    assert [s["key"] for s in returned] == ["ENG"]
+    path_arg = mock_internal.get.call_args.args[0]
+    assert path_arg.startswith("api/v2/spaces")
+    assert not path_arg.startswith("wiki/api/v2/spaces")
+
+
+def test_retrieve_confluence_spaces_cloud_falls_back_on_empty_v2_body(
+    mock_credentials_provider: mock.Mock,
+) -> None:
+    """Empty 202-style v2 response must fall back to v1 instead of opaque JSON error."""
+    client = OnyxConfluence(
+        is_cloud=True,
+        url="https://example.atlassian.net/wiki",
+        credentials_provider=mock_credentials_provider,
+        timeout=10,
+    )
+    mock_internal = mock.Mock()
+    mock_internal.url = client._url
+    client._confluence = mock_internal
+    client._kwargs = client.shared_base_kwargs
+
+    empty_v2 = requests.Response()
+    empty_v2.status_code = 202
+    empty_v2._content = b""
+    empty_v2.url = "api/v2/spaces?limit=1"
+
+    def get_side_effect(path: str, *args: Any, **kwargs: Any) -> requests.Response:
+        if path.startswith("api/v2/spaces"):
+            return empty_v2
+        if path.startswith("rest/api/space"):
+            return _create_mock_response(
+                200,
+                {"results": [{"key": "FALLBACK"}], "_links": {}},
+                url=path,
+            )
+        raise RuntimeError(f"Unexpected path: {path}")
+
+    mock_internal.get.side_effect = get_side_effect
+
+    returned = list(client.retrieve_confluence_spaces(limit=1))
+
+    assert [s["key"] for s in returned] == ["FALLBACK"]
+
+
 def test_jsonrpc_websudo_html_response_raises_validation_error(
     confluence_server_client: OnyxConfluence,
 ) -> None:

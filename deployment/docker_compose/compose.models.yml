@@ -1,54 +1,50 @@
-name: onyx-models
+name: vllm
 
 services:
-  qwen:
-    image: vllm/vllm-openai:latest
-    container_name: vllm-qwen
+  gemma4:
+    image: vllm/vllm-openai:gemma4-unified
+    container_name: vllm-gemma
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: true
     ports:
       - "8001:8000"
     volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    env_file:
-      - path: ../../.env
+      - huggingface-cache:/root/.cache/huggingface
     ipc: host
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
-              capabilities: [gpu]
+              count: 1
+              capabilities:
+                - gpu
+    # RTX 5080 16GB + Windows (~1.3GiB reserved):
+    # - Online FP8 loads, but Cutlass FP8 GEMM fails (ScalarType 46).
+    # - E4B BF16 weights alone ~15GiB → no KV room.
+    # Use E2B BF16 + capped context + text-only.
     command:
-      - --model
-      - Qwen/Qwen3.6-27B
+      - google/gemma-4-E2B-it
       - --served-model-name
-      - qwen
+      - gemma4-e2b
+      - --trust-remote-code
+      - --kv-cache-dtype
+      - fp8
+      - --enforce-eager
       - --max-model-len
-      - "8192"
+      - "2048"
       - --gpu-memory-utilization
-      - "0.50"
+      - "0.85"
+      - --max-num-seqs
+      - "4"
+      - --limit-mm-per-prompt
+      - '{"image":0,"audio":0}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
 
-  llava:
-    image: vllm/vllm-openai:latest
-    container_name: vllm-llava
-    ports:
-      - "8002:8000"
-    volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    env_file:
-      - path: ../../.env
-    ipc: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    command:
-      - --model
-      - llava-hf/llava-1.5-13b-hf
-      - --served-model-name
-      - llava
-      - --gpu-memory-utilization
-      - "0.50"
+volumes:
+  huggingface-cache:

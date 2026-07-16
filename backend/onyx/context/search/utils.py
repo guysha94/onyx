@@ -191,7 +191,11 @@ def populate_file_ids_on_sections(
     sections: list[InferenceSection],
     db_session: Session,
 ) -> None:
-    """Stamp `Document.file_id` onto every chunk in-place."""
+    """Stamp image-backed `Document.file_id` onto every chunk in-place.
+
+    Only docs whose FileRecord MIME is `image/*` are stamped — used as a
+    thumbnail fallback for search result cards.
+    """
     if not sections:
         return
 

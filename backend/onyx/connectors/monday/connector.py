@@ -75,27 +75,70 @@ fragment ItemFields on Item {
 }
 """
 
-_LIST_BOARDS_QUERY = """
-query MondayListBoards(
-    $boardsLimit: Int!
-    $page: Int!
-    $boardIds: [ID!]
-    $workspaceIds: [ID!]
-) {
-    boards(
-        limit: $boardsLimit
-        page: $page
-        ids: $boardIds
-        workspace_ids: $workspaceIds
-    ) {
+_BOARD_LIST_FIELDS = """
         id
         name
         workspace {
             id
             name
         }
-    }
-}
+"""
+
+# Unfiltered boards listing — used when neither board_ids nor workspace_ids is set.
+# Avoids workspace_ids: null, which Monday treats inconsistently and which misses
+# boards in closed workspaces omitted by get_workspaces.
+_LIST_ALL_BOARDS_QUERY = f"""
+query MondayListAllBoards($boardsLimit: Int!, $page: Int!) {{
+    boards(limit: $boardsLimit, page: $page) {{{_BOARD_LIST_FIELDS}
+    }}
+}}
+"""
+
+_LIST_BOARDS_BY_IDS_QUERY = f"""
+query MondayListBoardsByIds(
+    $boardsLimit: Int!
+    $page: Int!
+    $boardIds: [ID!]!
+) {{
+    boards(
+        limit: $boardsLimit
+        page: $page
+        ids: $boardIds
+    ) {{{_BOARD_LIST_FIELDS}
+    }}
+}}
+"""
+
+_LIST_BOARDS_BY_WORKSPACE_QUERY = f"""
+query MondayListBoardsByWorkspace(
+    $boardsLimit: Int!
+    $page: Int!
+    $workspaceIds: [ID!]!
+) {{
+    boards(
+        limit: $boardsLimit
+        page: $page
+        workspace_ids: $workspaceIds
+    ) {{{_BOARD_LIST_FIELDS}
+    }}
+}}
+"""
+
+_LIST_BOARDS_BY_WORKSPACE_AND_IDS_QUERY = f"""
+query MondayListBoardsByWorkspaceAndIds(
+    $boardsLimit: Int!
+    $page: Int!
+    $workspaceIds: [ID!]!
+    $boardIds: [ID!]!
+) {{
+    boards(
+        limit: $boardsLimit
+        page: $page
+        workspace_ids: $workspaceIds
+        ids: $boardIds
+    ) {{{_BOARD_LIST_FIELDS}
+    }}
+}}
 """
 
 _BOARD_ITEMS_PAGE_QUERY = (
@@ -363,57 +406,71 @@ class MondayConnector(
         """Yield board contexts with workspace names from board GraphQL payloads.
 
         SDK ``fetch_boards`` omits ``workspace``; closed workspaces may also be
-        missing from ``get_workspaces``. Always list boards via ``_LIST_BOARDS_QUERY``
-        so ``workspace { id name }`` is available on each board.
+        missing from ``get_workspaces``. Board listing queries always request
+        ``workspace { id name }`` so names come from board payloads.
+
+        When neither board nor workspace filter is set, paginate an unfiltered
+        ``boards()`` query — do not rely on ``list_workspaces()``, which omits
+        closed workspaces for many API tokens.
         """
         board_ids = _normalize_id_filter(self.board_ids)
         workspace_ids = _normalize_id_filter(self.workspace_ids)
 
         if board_ids and not workspace_ids:
+            boards = self._run_query(
+                _LIST_BOARDS_BY_IDS_QUERY,
+                {
+                    "boardsLimit": _BOARDS_PAGE_LIMIT,
+                    "page": 1,
+                    "boardIds": board_ids,
+                },
+            ).get("boards", [])
+            for board in boards:
+                yield _board_context_from_board(board)
+            return
+
+        if not workspace_ids:
             page = 1
             while True:
                 boards = self._run_query(
-                    _LIST_BOARDS_QUERY,
+                    _LIST_ALL_BOARDS_QUERY,
                     {
                         "boardsLimit": _BOARDS_PAGE_LIMIT,
                         "page": page,
-                        "boardIds": board_ids,
-                        "workspaceIds": None,
                     },
                 ).get("boards", [])
                 if not boards:
                     break
                 for board in boards:
                     yield _board_context_from_board(board)
-                # Explicit board IDs are returned in one page by Monday.
-                break
+                if len(boards) < _BOARDS_PAGE_LIMIT:
+                    break
+                page += 1
             return
 
-        if workspace_ids:
-            workspace_names = self._workspace_name_by_id(workspace_ids)
-            target_workspace_ids = workspace_ids
-        else:
-            client = self._require_client()
-            listed = client.list_workspaces()
-            target_workspace_ids = [str(workspace["id"]) for workspace in listed]
-            workspace_names = {
-                str(workspace["id"]): workspace.get("name")
-                or f"Workspace {workspace['id']}"
-                for workspace in listed
-            }
-
-        for workspace_id in target_workspace_ids:
+        workspace_names = self._workspace_name_by_id(workspace_ids)
+        for workspace_id in workspace_ids:
             page = 1
             while True:
-                boards = self._run_query(
-                    _LIST_BOARDS_QUERY,
-                    {
-                        "boardsLimit": _BOARDS_PAGE_LIMIT,
-                        "page": page,
-                        "boardIds": board_ids,
-                        "workspaceIds": [workspace_id],
-                    },
-                ).get("boards", [])
+                if board_ids:
+                    boards = self._run_query(
+                        _LIST_BOARDS_BY_WORKSPACE_AND_IDS_QUERY,
+                        {
+                            "boardsLimit": _BOARDS_PAGE_LIMIT,
+                            "page": page,
+                            "workspaceIds": [workspace_id],
+                            "boardIds": board_ids,
+                        },
+                    ).get("boards", [])
+                else:
+                    boards = self._run_query(
+                        _LIST_BOARDS_BY_WORKSPACE_QUERY,
+                        {
+                            "boardsLimit": _BOARDS_PAGE_LIMIT,
+                            "page": page,
+                            "workspaceIds": [workspace_id],
+                        },
+                    ).get("boards", [])
                 if not boards:
                     break
 
@@ -447,13 +504,16 @@ class MondayConnector(
             ) from exc
 
     def validate_perm_sync(self) -> None:
-        board_contexts = list(self._iter_board_contexts())
-        if not board_contexts:
+        # Only probe the first board — full enumeration of unscoped boards()
+        # can exceed the frontend connector-creation timeout and race-delete
+        # the connector mid credential-link.
+        first_board = next(self._iter_board_contexts(), None)
+        if first_board is None:
             raise ConnectorValidationError(
                 "monday.com permission sync validation could not find any accessible boards."
             )
 
-        board_id = board_contexts[0]["board_id"]
+        board_id = first_board["board_id"]
         external_access = get_board_permissions(
             self._run_query, board_id, add_prefix=False
         )

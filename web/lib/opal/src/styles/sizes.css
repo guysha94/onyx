@@ -10,6 +10,8 @@
 
 :root {
   --app-page-main-content-width: 45rem;
+  /* Wider than chat reading column — search results + source facets need room. */
+  --app-page-search-content-width: 72rem;
   --notifications-popover: 20rem;
 
   --app-container-sm: 42rem;

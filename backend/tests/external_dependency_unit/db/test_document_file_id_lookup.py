@@ -3,7 +3,8 @@
 Two tightly-coupled surfaces live in this file:
 
   1. `get_document_id_to_file_id_map` — the batched DB lookup that joins
-     chunk-level `document_id`s to their `Document.file_id` rows.
+     chunk-level `document_id`s to their `Document.file_id` rows, restricted
+     to image MIME FileRecords (thumbnail fallack only).
   2. `populate_file_ids_on_sections` — the post-retrieval enrichment step
      that calls (1) and stamps `file_id` onto every `InferenceChunk` in a
      batch of sections.
@@ -19,11 +20,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from onyx.configs.constants import DocumentSource
+from onyx.configs.constants import FileOrigin
 from onyx.context.search.models import InferenceChunk
 from onyx.context.search.models import InferenceSection
 from onyx.context.search.utils import populate_file_ids_on_sections
 from onyx.db.document import get_document_id_to_file_id_map
 from onyx.db.models import Document as DBDocument
+from onyx.db.models import FileRecord
 from onyx.kg.models import KGStage
 
 
@@ -31,29 +34,61 @@ from onyx.kg.models import KGStage
 def doc_cleanup(
     db_session: Session,
     tenant_context: None,  # noqa: ARG001
-) -> Generator[list[str], None, None]:
-    """Tracks doc_ids seeded by the test so teardown can reap them.
+) -> Generator[tuple[list[str], list[str]], None, None]:
+    """Tracks doc_ids / file_ids seeded by the test so teardown can reap them.
 
-    These tests seed Document rows directly (no cc_pair wiring) because the
-    lookup under test only touches `Document.id` / `Document.file_id`.
+    These tests seed Document + FileRecord rows directly (no cc_pair wiring)
+    because the lookup under test only touches `Document.id` / `Document.file_id`
+    and `FileRecord.file_type`.
     """
-    created: list[str] = []
+    created_docs: list[str] = []
+    created_files: list[str] = []
     try:
-        yield created
+        yield created_docs, created_files
     finally:
-        if created:
-            db_session.query(DBDocument).filter(DBDocument.id.in_(created)).delete(
+        # Documents first — they reference FileRecord.file_id.
+        if created_docs:
+            db_session.query(DBDocument).filter(DBDocument.id.in_(created_docs)).delete(
                 synchronize_session="fetch"
             )
+        if created_files:
+            db_session.query(FileRecord).filter(
+                FileRecord.file_id.in_(created_files)
+            ).delete(synchronize_session="fetch")
+        if created_docs or created_files:
             db_session.commit()
+
+
+def _seed_file_record(
+    db_session: Session,
+    file_tracker: list[str],
+    file_id: str,
+    file_type: str = "image/png",
+) -> FileRecord:
+    record = FileRecord(
+        file_id=file_id,
+        display_name=file_id,
+        file_origin=FileOrigin.CONNECTOR,
+        file_type=file_type,
+        bucket_name="test-bucket",
+        object_key=f"test/{file_id}",
+    )
+    db_session.add(record)
+    db_session.commit()
+    file_tracker.append(file_id)
+    return record
 
 
 def _seed_doc(
     db_session: Session,
-    tracker: list[str],
+    doc_tracker: list[str],
+    file_tracker: list[str],
     doc_id: str,
     file_id: str | None,
+    file_type: str = "image/png",
 ) -> DBDocument:
+    if file_id is not None:
+        _seed_file_record(db_session, file_tracker, file_id, file_type=file_type)
     doc = DBDocument(
         id=doc_id,
         semantic_id=f"semantic-{doc_id}",
@@ -62,27 +97,30 @@ def _seed_doc(
     )
     db_session.add(doc)
     db_session.commit()
-    tracker.append(doc_id)
+    doc_tracker.append(doc_id)
     return doc
 
 
 class TestGetDocumentIdToFileIdMap:
-    def test_returns_mapping_only_for_docs_with_file_id(
+    def test_returns_mapping_only_for_docs_with_image_file_id(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
         with_file = f"doc-{uuid4().hex[:8]}"
         without_file = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, with_file, file_id="file-abc")
-        _seed_doc(db_session, doc_cleanup, without_file, file_id=None)
+        _seed_doc(db_session, doc_tracker, file_tracker, with_file, file_id="file-abc")
+        _seed_doc(
+            db_session, doc_tracker, file_tracker, without_file, file_id=None
+        )
 
         result = get_document_id_to_file_id_map(
             db_session=db_session,
             document_ids=[with_file, without_file],
         )
 
-        # Only the doc with a file_id appears; missing keys mean "no file".
+        # Only the doc with an image file_id appears; missing keys mean "no file".
         assert result == {with_file: "file-abc"}
 
     def test_empty_input_returns_empty_map(self, db_session: Session) -> None:
@@ -91,10 +129,11 @@ class TestGetDocumentIdToFileIdMap:
     def test_unknown_document_ids_are_silently_ignored(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
         known = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, known, file_id="file-xyz")
+        _seed_doc(db_session, doc_tracker, file_tracker, known, file_id="file-xyz")
 
         result = get_document_id_to_file_id_map(
             db_session=db_session,
@@ -103,17 +142,18 @@ class TestGetDocumentIdToFileIdMap:
 
         assert result == {known: "file-xyz"}
 
-    def test_multiple_docs_all_with_file_ids(
+    def test_multiple_docs_all_with_image_file_ids(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
         doc_a = f"doc-{uuid4().hex[:8]}"
         doc_b = f"doc-{uuid4().hex[:8]}"
         doc_c = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, doc_a, file_id="file-a")
-        _seed_doc(db_session, doc_cleanup, doc_b, file_id="file-b")
-        _seed_doc(db_session, doc_cleanup, doc_c, file_id="file-c")
+        _seed_doc(db_session, doc_tracker, file_tracker, doc_a, file_id="file-a")
+        _seed_doc(db_session, doc_tracker, file_tracker, doc_b, file_id="file-b")
+        _seed_doc(db_session, doc_tracker, file_tracker, doc_c, file_id="file-c")
 
         result = get_document_id_to_file_id_map(
             db_session=db_session,
@@ -121,6 +161,40 @@ class TestGetDocumentIdToFileIdMap:
         )
 
         assert result == {doc_a: "file-a", doc_b: "file-b", doc_c: "file-c"}
+
+    def test_non_image_file_type_is_excluded(
+        self,
+        db_session: Session,
+        doc_cleanup: tuple[list[str], list[str]],
+    ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
+        image_doc = f"doc-{uuid4().hex[:8]}"
+        xlsx_doc = f"doc-{uuid4().hex[:8]}"
+        _seed_doc(
+            db_session,
+            doc_tracker,
+            file_tracker,
+            image_doc,
+            file_id="file-image",
+            file_type="image/png",
+        )
+        _seed_doc(
+            db_session,
+            doc_tracker,
+            file_tracker,
+            xlsx_doc,
+            file_id="file-xlsx",
+            file_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+        result = get_document_id_to_file_id_map(
+            db_session=db_session,
+            document_ids=[image_doc, xlsx_doc],
+        )
+
+        assert result == {image_doc: "file-image"}
 
 
 # ---------------------------------------------------------------------------
@@ -167,10 +241,11 @@ class TestPopulateFileIdsOnSections:
     def test_stamps_file_id_on_matching_chunk(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
         doc_id = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, doc_id, file_id="file-abc")
+        _seed_doc(db_session, doc_tracker, file_tracker, doc_id, file_id="file-abc")
 
         section = _make_section(_make_chunk(doc_id))
         populate_file_ids_on_sections([section], db_session)
@@ -180,12 +255,15 @@ class TestPopulateFileIdsOnSections:
     def test_stamps_file_id_on_all_chunks_in_section(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
         """Adjacent chunks for the same doc all share the same file_id so
         downstream code doesn't care which chunk it inspects."""
+        doc_tracker, file_tracker = doc_cleanup
         doc_id = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, doc_id, file_id="file-shared")
+        _seed_doc(
+            db_session, doc_tracker, file_tracker, doc_id, file_id="file-shared"
+        )
 
         center = _make_chunk(doc_id, chunk_id=5)
         above = _make_chunk(doc_id, chunk_id=4)
@@ -199,10 +277,34 @@ class TestPopulateFileIdsOnSections:
     def test_doc_without_file_id_leaves_chunk_unchanged(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
         doc_id = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, doc_id, file_id=None)
+        _seed_doc(db_session, doc_tracker, file_tracker, doc_id, file_id=None)
+
+        section = _make_section(_make_chunk(doc_id))
+        populate_file_ids_on_sections([section], db_session)
+
+        assert section.center_chunk.file_id is None
+
+    def test_non_image_file_type_leaves_chunk_unchanged(
+        self,
+        db_session: Session,
+        doc_cleanup: tuple[list[str], list[str]],
+    ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
+        doc_id = f"doc-{uuid4().hex[:8]}"
+        _seed_doc(
+            db_session,
+            doc_tracker,
+            file_tracker,
+            doc_id,
+            file_id="file-xlsx",
+            file_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
 
         section = _make_section(_make_chunk(doc_id))
         populate_file_ids_on_sections([section], db_session)
@@ -224,12 +326,15 @@ class TestPopulateFileIdsOnSections:
     def test_mixed_batch_only_matches_get_stamped(
         self,
         db_session: Session,
-        doc_cleanup: list[str],
+        doc_cleanup: tuple[list[str], list[str]],
     ) -> None:
+        doc_tracker, file_tracker = doc_cleanup
         with_file = f"doc-{uuid4().hex[:8]}"
         without_file = f"doc-{uuid4().hex[:8]}"
-        _seed_doc(db_session, doc_cleanup, with_file, file_id="file-mixed")
-        _seed_doc(db_session, doc_cleanup, without_file, file_id=None)
+        _seed_doc(
+            db_session, doc_tracker, file_tracker, with_file, file_id="file-mixed"
+        )
+        _seed_doc(db_session, doc_tracker, file_tracker, without_file, file_id=None)
 
         section_a = _make_section(_make_chunk(with_file))
         section_b = _make_section(_make_chunk(without_file))

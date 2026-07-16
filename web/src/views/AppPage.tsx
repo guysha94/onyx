@@ -1067,7 +1067,7 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
                   {/* SearchUI */}
                   <Fade
                     show={isSearch}
-                    className="h-full flex-1 w-full max-w-(--app-page-main-content-width) px-1 flex flex-col"
+                    className="h-full flex-1 w-full max-w-(--app-page-search-content-width) px-1 flex flex-col"
                   >
                     <Spacer rem={0.75} />
                     <SearchUI

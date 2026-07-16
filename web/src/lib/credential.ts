@@ -91,7 +91,8 @@ export function linkCredential(
   accessType?: AccessType,
   groups?: number[],
   autoSyncOptions?: Record<string, any>,
-  processingMode?: ProcessingMode
+  processingMode?: ProcessingMode,
+  signal?: AbortSignal
 ) {
   return fetch(
     `/api/manage/connector/${connectorId}/credential/${credentialId}`,
@@ -107,6 +108,7 @@ export function linkCredential(
         auto_sync_options: autoSyncOptions || null,
         processing_mode: processingMode || "REGULAR",
       }),
+      signal,
     }
   );
 }

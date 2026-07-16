@@ -45,6 +45,7 @@ from onyx.db.models import ConnectorCredentialPair
 from onyx.db.models import Credential
 from onyx.db.models import Document as DbDocument
 from onyx.db.models import DocumentByConnectorCredentialPair
+from onyx.db.models import FileRecord
 from onyx.db.models import KGEntity
 from onyx.db.models import KGRelationship
 from onyx.db.models import User
@@ -1185,13 +1186,20 @@ def get_document_id_to_file_id_map(
     db_session: Session,
     document_ids: list[str],
 ) -> dict[str, str]:
-    """Return a `{document_id: file_id}` map for docs that have a file_id."""
+    """Return a `{document_id: file_id}` map for docs backed by an image file.
+
+    Used as a search-result thumbnail fallback. Only includes file_ids whose
+    FileRecord.file_type is an image MIME so non-image docs (e.g. xlsx) do not
+    render broken thumbnails in result cards.
+    """
     if not document_ids:
         return {}
     rows = (
         db_session.query(DbDocument.id, DbDocument.file_id)
+        .join(FileRecord, FileRecord.file_id == DbDocument.file_id)
         .filter(DbDocument.id.in_(document_ids))
         .filter(DbDocument.file_id.isnot(None))
+        .filter(FileRecord.file_type.ilike("image/%"))
         .all()
     )
     return {doc_id: file_id for doc_id, file_id in rows}
