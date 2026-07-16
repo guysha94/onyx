@@ -86,11 +86,11 @@ services:
 
   relational_db:
     ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+      - "0.0.0.0:5433:5432"
 
   opensearch:
     ports:
-      - "${OPENSEARCH_HOST_PORT:-9200}:9200"
+      - "0.0.0.0:9200:9200"
     # Rootless Docker can reject the base OpenSearch ulimit settings, so clear
     # the inherited block entirely in the dev override.
     ulimits: !reset null

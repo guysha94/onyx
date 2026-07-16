@@ -363,8 +363,8 @@ services:
     # DEV: To expose ports, either:
     # 1. Use docker-compose.dev.yml: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
     # 2. Uncomment the ports below
-    # ports:
-    #   - "5432:5432"
+    ports:
+      - "0.0.0.0:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
@@ -380,6 +380,8 @@ services:
     # an external OpenSearch instance, set OPENSEARCH_HOST in your env and
     # remove this service from the compose file (or skip it via the service list
     # when running `docker compose up`).
+    ports:
+      - "0.0.0.0:9200:9200"
     environment:
       # We need discovery.type=single-node so that OpenSearch doesn't try
       # forming a cluster and waiting for other nodes to become live.

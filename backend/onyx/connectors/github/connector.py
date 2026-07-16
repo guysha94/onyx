@@ -63,6 +63,12 @@ CURSOR_LOG_FREQUENCY = 50
 
 _MAX_NUM_RATE_LIMIT_RETRIES = 5
 
+# GitHub returns HTTP 409 "Git Repository is empty." from the git-tree /
+# contents endpoints for repos that have no commits on their default branch.
+# This is not an error worth failing the whole indexing run over — the repo
+# simply has nothing to index.
+_EMPTY_REPO_STATUS = 409
+
 ONE_DAY = timedelta(days=1)
 SLIM_BATCH_SIZE = 100
 
@@ -757,6 +763,17 @@ class GithubConnector(
         except RateLimitExceededException:
             sleep_after_rate_limit_exception(self.github_client)
             return self._list_indexable_files(repo, attempt_num + 1)
+        except GithubException as e:
+            if e.status == _EMPTY_REPO_STATUS:
+                # Empty repo (no commits) — nothing to index; skip cleanly
+                # rather than failing the entire connector run.
+                logger.info(
+                    "Skipping files for empty repo %s (no commits on default "
+                    "branch)",
+                    repo.full_name,
+                )
+                return [], False
+            raise
 
     def _fetch_file_content(
         self, repo: Repository.Repository, path: str, attempt_num: int = 0
@@ -1263,7 +1280,13 @@ class GithubConnector(
                                 self.repo_owner,
                                 repo_name,
                             )
-                            test_repo.get_contents("")
+                            try:
+                                test_repo.get_contents("")
+                            except GithubException as e:
+                                if e.status != _EMPTY_REPO_STATUS:
+                                    raise
+                                # Empty repo (no commits) is still a valid,
+                                # accessible repository — just nothing to index.
                             valid_repos = True
                             # If at least one repo is valid, we can proceed
                             break
@@ -1283,7 +1306,12 @@ class GithubConnector(
                     test_repo = self.github_client.get_repo(
                         f"{self.repo_owner}/{self.repositories}"
                     )
-                    test_repo.get_contents("")
+                    try:
+                        test_repo.get_contents("")
+                    except GithubException as e:
+                        if e.status != _EMPTY_REPO_STATUS:
+                            raise
+                        # Empty repo (no commits) is still valid — nothing to index.
             else:
                 # Try to get organization first
                 try:

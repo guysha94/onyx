@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from github import Github
+from github.GithubException import GithubException
 from github.GithubException import UnknownObjectException
 from github.RateLimit import RateLimit
 from github.Requester import Requester
@@ -312,6 +313,30 @@ def test_truncated_tree_yields_failure(
     assert len(failures) == 1
     assert failures[0].failed_entity is not None
     assert "truncated" in failures[0].failure_message.lower()
+
+
+def test_empty_repo_409_is_skipped(
+    mock_github_client: MagicMock,
+    create_mock_repo: Callable[..., MagicMock],
+) -> None:
+    """An empty repo (no commits) returns 409 on get_git_tree.
+
+    This must be skipped cleanly (no docs, no failures) rather than failing
+    the whole indexing run.
+    """
+    connector = _build_connector(mock_github_client)
+    mock_repo = create_mock_repo({"README.md": b"# Hi"})
+    mock_repo.get_git_tree = MagicMock(
+        side_effect=GithubException(409, {"message": "Git Repository is empty."}, {})
+    )
+    mock_github_client.get_repo.return_value = mock_repo
+
+    with patch.object(SerializedRepository, "to_Repository", return_value=mock_repo):
+        outputs = load_everything_from_checkpoint_connector(connector, 0, time.time())
+
+    items = _all_items(outputs)
+    assert items == []
+    assert outputs[-1].next_checkpoint.has_more is False
 
 
 def test_prs_disabled_404_does_not_crash_files(
